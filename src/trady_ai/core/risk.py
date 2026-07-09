@@ -1,4 +1,5 @@
 from decimal import Decimal
+from typing import Any, Literal, cast
 
 from trady_ai.config.runtime_config import RuntimeConfig
 from trady_ai.core.models import ExecutionDecision, Position, Signal
@@ -50,7 +51,7 @@ class RiskEnforcer:
             raise ValueError("position_size must be positive")
 
         open_positions = [p for p in positions if p.status == "OPEN"]
-        details: dict = {
+        details: dict[str, Any] = {
             "max_open_positions": self.max_open_positions,
             "current_open": len(open_positions),
         }
@@ -106,7 +107,7 @@ class RiskEnforcer:
         action = "OPEN_LONG" if signal.direction == "LONG" else "OPEN_SHORT"
         return ExecutionDecision(
             signal_id=signal.id,
-            action=action,
+            action=cast(Literal["OPEN_LONG", "OPEN_SHORT", "CLOSE", "HOLD", "REJECT"], action),
             reason=f"Signal {signal.direction} approved",
             risk_check_passed=True,
             risk_check_details=details,
