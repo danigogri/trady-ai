@@ -85,7 +85,7 @@ def init_core_tables(db: sqlite_utils.Database) -> None:
 
 def persist_market_state(db: sqlite_utils.Database, state: MarketState) -> None:
     """Insert a MarketState record. Prices stored as TEXT (Decimal string)."""
-    db["market_states"].insert(
+    db["market_states"].insert(  # type: ignore[union-attr]
         {
             "market_id": state.market_id,
             "timestamp": state.timestamp.isoformat(),
@@ -100,7 +100,7 @@ def persist_market_state(db: sqlite_utils.Database, state: MarketState) -> None:
 
 def persist_signal(db: sqlite_utils.Database, signal: Signal) -> None:
     """Insert or replace a Signal. Metadata serialized as JSON."""
-    db["signals"].insert(
+    db["signals"].insert(  # type: ignore[union-attr]
         {
             "id": str(signal.id),
             "timestamp": signal.timestamp.isoformat(),
@@ -117,7 +117,7 @@ def persist_signal(db: sqlite_utils.Database, signal: Signal) -> None:
 
 def persist_position(db: sqlite_utils.Database, position: Position) -> None:
     """Insert or replace a Position (upsert by id)."""
-    db["positions"].insert(
+    db["positions"].insert(  # type: ignore[union-attr]
         {
             "id": str(position.id),
             "market_id": position.market_id,
@@ -136,7 +136,7 @@ def persist_position(db: sqlite_utils.Database, position: Position) -> None:
 
 def persist_trade(db: sqlite_utils.Database, trade: Trade) -> None:
     """Insert a Trade record. dry_run stored as INTEGER (SQLite boolean)."""
-    db["trades"].insert(
+    db["trades"].insert(  # type: ignore[union-attr]
         {
             "id": str(trade.id),
             "signal_id": str(trade.signal_id),
@@ -162,7 +162,7 @@ def persist_execution_log(
     trade: Trade | None,
 ) -> None:
     """Insert an execution log entry for one tick."""
-    db["execution_log"].insert(
+    db["execution_log"].insert(  # type: ignore[union-attr]
         {
             "tick_number": tick_number,
             "market_id": market_input.market_id,
