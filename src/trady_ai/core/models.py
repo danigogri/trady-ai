@@ -41,7 +41,7 @@ class Signal(BaseModel):
     strategy_name: str
     metadata: dict[str, Any] = {}
 
-    def __init__(self, **data):
+    def __init__(self, **data: Any) -> None:
         if "id" not in data:
             data["id"] = uuid.uuid5(
                 NAMESPACE,
@@ -64,7 +64,7 @@ class Position(BaseModel):
     status: Literal["OPEN", "CLOSED"] = "OPEN"
     signal_id: uuid.UUID
 
-    def __init__(self, **data):
+    def __init__(self, **data: Any) -> None:
         if "id" not in data:
             market_id = data.get("market_id", "")
             signal_id = data.get("signal_id", uuid.UUID(int=0))
@@ -87,7 +87,7 @@ class Trade(BaseModel):
     timestamp: datetime
     dry_run: bool = True
 
-    def __init__(self, **data):
+    def __init__(self, **data: Any) -> None:
         if "id" not in data:
             position_id = data.get("position_id", uuid.UUID(int=0))
             action = data.get("action", "")
