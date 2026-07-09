@@ -6,19 +6,19 @@
 
 ---
 
-[BL-001] | deuda | media | models.py | `__init__` en Signal, Position, Trade sin type annotations (3 ocurrencias: líneas 44, 67, 90) | abierto
-[BL-002] | deuda | media | engine.py, observability.py, risk.py | Tipos genéricos sin argumentos: `list`, `dict` sin `list[...]` / `dict[..., ...]` (7 ocurrencias) | abierto
-[BL-003] | deuda | media | markov_strategy.py, position_manager.py, engine.py | Llamadas a constructores no tipados (Signal, Position, Trade, PositionManager) que mypy no puede verificar (7 ocurrencias) | abierto
-[BL-004] | deuda | alta | persistence.py | `sqlite_utils.Database.__getitem__` retorna `Table | View`, mypy no reconoce `.insert()` en tipos unión (5 ocurrencias: líneas 88, 103, 120, 139, 165) | abierto
-[BL-005] | bug | alta | state.py, risk.py | Argumento `str` pasado donde se espera `Literal['UP','DOWN','NEUTRAL']` (state.py:50) y `Literal['OPEN_LONG','OPEN_SHORT','CLOSE','HOLD','REJECT']` (risk.py:109) | abierto
-[BL-006] | deuda | alta | observability.py | Operaciones no seguras con `Decimal | None`: suma, comparación, conversión a `float` sin manejar el caso `None` (4 errores) | abierto
-[BL-007] | deuda | baja | position_manager.py | `__init__` sin return type annotation (linea 16) | abierto
+[BL-001] | deuda | media | models.py | `__init__` en Signal, Position, Trade sin type annotations (3 ocurrencias) | ✅ resuelto
+[BL-002] | deuda | media | engine.py, observability.py, risk.py | Tipos genéricos sin argumentos: `list`, `dict` sin parámetros de tipo (7 ocurrencias) | ✅ resuelto
+[BL-003] | deuda | media | markov_strategy.py, position_manager.py, engine.py | Llamadas a constructores no tipados (Signal, Position, Trade, PositionManager) que mypy no puede verificar (7 ocurrencias) | ✅ resuelto (desbloqueado por BL-001)
+[BL-004] | deuda | alta | persistence.py | `sqlite_utils.Database.__getitem__` retorna `Table | View`, mypy no reconoce `.insert()` en tipos unión (5 ocurrencias) | ✅ resuelto (# type: ignore[union-attr])
+[BL-005] | bug | alta | state.py, risk.py | Argumento `str` pasado donde se espera `Literal['UP','DOWN','NEUTRAL']` (state.py:50) y `Literal['OPEN_LONG','OPEN_SHORT','CLOSE','HOLD','REJECT']` (risk.py:109) | ✅ resuelto (cast explícito)
+[BL-006] | deuda | alta | observability.py | Operaciones no seguras con `Decimal | None`: suma, comparación, conversión a `float` sin manejar el caso `None` (4 errores) | ✅ resuelto (filtro + type narrowing)
+[BL-007] | deuda | baja | position_manager.py | `__init__` sin return type annotation (línea 16) | ✅ resuelto
+[BL-008] | deuda | baja | replay.py | Errores colaterales de BL-002: variables de loop `a/b` reusadas entre tipos incompatibles (6 ocurrencias) | ✅ resuelto (renombrado a dec_a/dec_b, sig_a/sig_b, trd_a/trd_b)
 
 ---
 
 ## 🧠 NOTAS
 
-- **Prioridad**: BL-005 y BL-006 son los más riesgosos porque pueden ocultar errores en runtime (tipos incorrectos que pasan por alto). BL-004 es molesto pero no bloqueante.
-- **Relación con Fase 2**: Antes de arrancar Polymarket integration conviene resolver al menos BL-005 y BL-001, para que mypy esté limpio en código nuevo.
-- **30 errores originales**: 17 son de tipado genérico (`type-arg`, `no-untyped-def`), 9 son de tipos incompatibles (`arg-type`, `operator`), 4 son de `union-attr` (sqlite_utils).
-- **Resolución**: BL-001 requiere anotar `__init__` con `**data: Any` + `super().__init__(**data)`. BL-004 requiere `# type: ignore[union-attr]` o cast. BL-005 requiere casts explícitos o reificar los Literals.
+- **Estado actual**: Fase 1 limpia. mypy: 0 errores (27 archivos). pytest: 117 pass. Coverage: 97%. Ruff: clean.
+- **Próximo paso**: SDD cycle Fase 2 — Design → Tasks → Apply → Verify.
+- **Lección aprendida**: cambios con riesgo de impacto colateral requieren Assessment Report + Documento Contrato antes de aplicar. Cambios triviales (renombres locales, annotations) pueden aplicarse directo con nota en commit.
