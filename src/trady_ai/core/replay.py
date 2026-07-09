@@ -50,34 +50,34 @@ def verify_replay(original: ExecutionResult, replayed: ExecutionResult) -> bool:
         raise AssertionError(
             f"Decision count mismatch: {len(original.decisions)} vs {len(replayed.decisions)}"
         )
-    for i, (a, b) in enumerate(zip(original.decisions, replayed.decisions)):
-        if a.action != b.action:
-            raise AssertionError(f"Decision {i} action mismatch: {a.action} vs {b.action}")
-        if a.signal_id != b.signal_id:
+    for i, (dec_a, dec_b) in enumerate(zip(original.decisions, replayed.decisions)):
+        if dec_a.action != dec_b.action:
+            raise AssertionError(f"Decision {i} action mismatch: {dec_a.action} vs {dec_b.action}")
+        if dec_a.signal_id != dec_b.signal_id:
             raise AssertionError(f"Decision {i} signal_id mismatch")
-        if a.reason != b.reason:
+        if dec_a.reason != dec_b.reason:
             raise AssertionError(f"Decision {i} reason mismatch")
 
     if len(original.signals) != len(replayed.signals):
         raise AssertionError(
             f"Signal count mismatch: {len(original.signals)} vs {len(replayed.signals)}"
         )
-    for i, (a, b) in enumerate(zip(original.signals, replayed.signals)):
-        if a.id != b.id:
+    for i, (sig_a, sig_b) in enumerate(zip(original.signals, replayed.signals)):
+        if sig_a.id != sig_b.id:
             raise AssertionError(f"Signal {i} id mismatch")
-        if a.direction != b.direction:
+        if sig_a.direction != sig_b.direction:
             raise AssertionError(f"Signal {i} direction mismatch")
-        if a.confidence != b.confidence:
+        if sig_a.confidence != sig_b.confidence:
             raise AssertionError(f"Signal {i} confidence mismatch")
 
     if len(original.trades) != len(replayed.trades):
         raise AssertionError(
             f"Trade count mismatch: {len(original.trades)} vs {len(replayed.trades)}"
         )
-    for i, (a, b) in enumerate(zip(original.trades, replayed.trades)):
-        if a.action != b.action:
+    for i, (trd_a, trd_b) in enumerate(zip(original.trades, replayed.trades)):
+        if trd_a.action != trd_b.action:
             raise AssertionError(f"Trade {i} action mismatch")
-        if a.id != b.id:
+        if trd_a.id != trd_b.id:
             raise AssertionError(f"Trade {i} id mismatch")
 
     return True
