@@ -142,3 +142,28 @@ class ExecutionEngine:
             result.decisions, result.trades, result.final_positions
         )
         return result
+
+    def run_from_store(self, strategy: SignalStrategy,
+                       since_seq: int = 0) -> ExecutionResult:
+        """Run engine consuming from event_store instead of explicit input list.
+
+        Reads events from event_store (since_seq onwards), converts to
+        MarketInput list, then delegates to self.run().
+
+        Phase 2 loads ALL events. Phases 6+ should implement cursor-based
+        streaming with configurable batch_size.
+
+        Args:
+            strategy: SignalStrategy implementation.
+            since_seq: Start from events with seq > since_seq. Default 0 = all.
+
+        Returns:
+            ExecutionResult: Same structure as run().
+
+        Raises:
+            ValueError: If since_seq < 0 (propagated from get_events).
+        """
+        from trady_ai.core.persistence import get_events
+
+        inputs = get_events(self._db, since_seq=since_seq)
+        return self.run(inputs, strategy)

@@ -1,14 +1,14 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import NAMESPACE_URL, uuid5
 
 from trady_ai.config.runtime_config import RuntimeConfig
-from trady_ai.core.models import Position, Signal
+from trady_ai.core.models import Signal
 from trady_ai.core.position_manager import PositionManager
 
 
 def _make_signal(direction: str = "LONG", market_id: str = "btc-usd") -> Signal:
-    dt = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    dt = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     return Signal(
         id=uuid5(NAMESPACE_URL, f"test_signal:{market_id}:{dt.isoformat()}"),
         timestamp=dt,

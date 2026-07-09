@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import sqlite_utils
@@ -8,7 +9,8 @@ from trady_ai.config import Settings
 def init_db(db_path: Path) -> sqlite_utils.Database:
     """Initialize SQLite database at the given path."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite_utils.Database(db_path)
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    db = sqlite_utils.Database(conn)
     tbl = db["_metadata"]
     assert isinstance(tbl, sqlite_utils.db.Table)
     tbl.create(

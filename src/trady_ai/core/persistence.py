@@ -1,4 +1,6 @@
 import json
+from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import sqlite_utils
@@ -81,6 +83,7 @@ def init_core_tables(db: sqlite_utils.Database) -> None:
         )
         """
     )
+    init_event_store(db)
 
 
 def persist_market_state(db: sqlite_utils.Database, state: MarketState) -> None:
@@ -181,3 +184,132 @@ def persist_execution_log(
 def load_execution_log(db: sqlite_utils.Database) -> list[dict[str, Any]]:
     """Load the complete execution log ordered by tick_number."""
     return list(db["execution_log"].rows_where(order_by="tick_number"))
+
+
+# ── Event Store ──────────────────────────────────────────────────────────────
+
+
+def init_event_store(db: sqlite_utils.Database) -> None:
+    """Create event_store table if not exists. Idempotent.
+
+    Called from init_core_tables() or independently.
+    """
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_store (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            market_id TEXT NOT NULL,
+            price TEXT NOT NULL,
+            volume TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'polymarket',
+            raw_payload TEXT NOT NULL,
+            captured_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def append_event(db: sqlite_utils.Database, event: dict[str, Any]) -> int | None:
+    """Insert event into event_store. Dedup via event_id UNIQUE constraint.
+
+    Args:
+        db: Database instance.
+        event: Dict with keys: event_id, market_id, price, volume,
+               timestamp, event_type, source (default 'polymarket').
+
+    Returns:
+        int | None: seq if inserted, None if duplicate (event_id exists).
+
+    Raises:
+        KeyError: If required keys missing from event dict.
+    """
+    cursor = db.execute(
+        """INSERT OR IGNORE INTO event_store
+           (event_id, market_id, price, volume, timestamp, event_type, source, raw_payload, captured_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [
+            event["event_id"],
+            event["market_id"],
+            event["price"],
+            event["volume"],
+            event["timestamp"],
+            event["event_type"],
+            event.get("source", "polymarket"),
+            event["raw_payload"],
+            event.get("captured_at", datetime.now(UTC).isoformat()),
+        ],
+    )
+    if cursor.rowcount == 0:
+        return None
+    row = db.execute("SELECT MAX(seq) FROM event_store").fetchone()
+    return row[0] if row else None
+
+
+def get_events(db: sqlite_utils.Database, since_seq: int = 0,
+               limit: int = 100) -> list[MarketInput]:
+    """Read events from store as MarketInput list.
+
+    Args:
+        db: Database instance.
+        since_seq: Return events with seq > since_seq. Default 0 = all.
+        limit: Max events to return. Default 100.
+
+    Returns:
+        list[MarketInput]: Ordered by seq ASC.
+
+    Raises:
+        ValueError: If since_seq < 0 or limit <= 0.
+    """
+    if since_seq < 0:
+        raise ValueError("since_seq must be >= 0")
+    if limit <= 0:
+        raise ValueError("limit must be > 0")
+
+    rows = db.query(
+        "SELECT market_id, price, volume, timestamp, source FROM event_store WHERE seq > ? ORDER BY seq ASC LIMIT ?",
+        [since_seq, limit],
+    )
+    return [
+        MarketInput(
+            market_id=row["market_id"],
+            price=Decimal(row["price"]),
+            volume=Decimal(row["volume"]),
+            timestamp=datetime.fromisoformat(row["timestamp"]),
+            source=row["source"],
+        )
+        for row in rows
+    ]
+
+
+def get_max_seq(db: sqlite_utils.Database) -> int:
+    """Get highest sequence number in event_store.
+
+    Returns:
+        int: MAX(seq), or 0 if table is empty.
+    """
+    cursor = db.execute("SELECT MAX(seq) FROM event_store")
+    row = cursor.fetchone()
+    return row[0] if row[0] is not None else 0
+
+
+def count_events(db: sqlite_utils.Database) -> int:
+    """Count total events in event_store.
+
+    Returns:
+        int: COUNT(*).
+    """
+    cursor = db.execute("SELECT COUNT(*) FROM event_store")
+    row = cursor.fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def reset_event_store(db: sqlite_utils.Database) -> None:
+    """DROP event_store and recreate. DEV ONLY.
+
+    Destroys all captured data. Use only for development regeneration.
+    """
+    db.execute("DROP TABLE IF EXISTS event_store")
+    init_event_store(db)

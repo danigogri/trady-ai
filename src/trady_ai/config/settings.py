@@ -28,6 +28,26 @@ class Settings(BaseSettings):
     default_transaction_cost_pct: float = 0.0
     default_stop_loss_pct: float = 0.05
 
+    # Polymarket connection (placeholders in dry_run, validated in live)
+    polymarket_api_key: str = ""
+    polymarket_secret: str = ""
+    polymarket_passphrase: str = ""
+    polymarket_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+    polymarket_rest_url: str = "https://clob.polymarket.com"
+
+    # Market configuration
+    active_markets: str = ""  # Comma-separated Condition IDs: "0x123,0x456"
+
+    def get_active_market_ids(self) -> list[str]:
+        """Parse active_markets into list of Condition IDs.
+
+        Returns:
+            list[str]: Stripped, non-empty market IDs. Empty list if active_markets is "".
+        """
+        if not self.active_markets:
+            return []
+        return [m.strip() for m in self.active_markets.split(",") if m.strip()]
+
     def get_runtime_config(self) -> "RuntimeConfig":
         """Build a RuntimeConfig from the Settings defaults."""
         from decimal import Decimal

@@ -38,3 +38,18 @@ def sample_market_input():
         volume=Decimal("100.50"),
         source="csv",
     )
+
+
+@pytest.fixture
+def tmp_event_store_db(tmp_path):
+    """Database with event_store table initialized."""
+    import sqlite3
+
+    import sqlite_utils
+
+    from trady_ai.core.persistence import init_event_store
+
+    conn = sqlite3.connect(str(tmp_path / "event_store_test.db"), check_same_thread=False)
+    db = sqlite_utils.Database(conn)
+    init_event_store(db)
+    return db
