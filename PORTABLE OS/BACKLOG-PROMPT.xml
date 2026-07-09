@@ -1,0 +1,242 @@
+<context-transfer project="trady.ai">
+  
+  <session-purpose>
+    Fix SDD backlog items (BL-001 to BL-007) for Trady.AI Fase 1 — Deterministic Core.
+    This is a fresh chat dedicated exclusively to backlog resolution.
+  </session-purpose>
+
+  <project-context>
+    Trady.AI is a deterministic trading engine built in Python 3.12+.
+    1311 lines of core code across 18 files in src/trady_ai/.
+    Architecture: PORTABLE OS (PORTABLE OS/CONSTITUTION.md + OPERATIONS-MANUAL.md + BACKLOG-PROTOCOL.md).
+    SDD cycle: Fase 1 (Deterministic Core) complete and archived. Fase 2 (Polymarket Integration) spec ready.
+    
+    Git repo at github.com/danigogri/trady-ai (PRIVATE).
+    Commit convention: docs:, feat:, fix:, deuda: (see PORTABLE OS/GIT-WORKFLUX.md).
+    Branch convention: fix/BL-XXX per backlog item.
+  </project-context>
+
+  <codebase-structure>
+    src/trady_ai/
+    ├── __init__.py
+    ├── cli/
+    │   └── main.py              (123 lines — CLI commands)
+    ├── config/
+    │   ├── settings.py          (62 lines — env-based settings)
+    │   └── runtime_config.py    (19 lines — execution config)
+    ├── core/
+    │   ├── models.py            (110 lines — ALL data models)
+    │   ├── engine.py            (143 lines — ExecutionEngine pipeline)
+    │   ├── state.py             (58 lines — MarketStateTracker)
+    │   ├── risk.py              (114 lines — RiskEnforcer)
+    │   ├── markov_strategy.py   (88 lines — MarkovStrategy)
+    │   ├── signal_strategy.py   (39 lines — SignalStrategy ABC)
+    │   ├── position_manager.py  (83 lines — PositionManager)
+    │   ├── persistence.py       (183 lines — SQLite persistence)
+    │   ├── observability.py     (46 lines — compute_summary)
+    │   ├── normalization.py     (29 lines — input normalization)
+    │   ├── replay.py            (83 lines — backtest replay)
+    │   ├── ingestion.py         (82 lines — CSV ingestion)
+    │   └── __init__.py
+    ├── adapters/                (empty — for Fase 2)
+    └── db/
+        └── database.py
+    
+    tests/
+    ├── conftest.py              (pytest fixtures: tmp_db, sample_market_input, etc.)
+    ├── unit/                    (15 test files)
+    └── integration/             (3 test files)
+    
+    pyproject.toml: 97% coverage target, strict mypy, ruff
+  </codebase-structure>
+
+  <critical-context>
+    ALL models live in src/trady_ai/core/models.py (110 lines).
+    They use Pydantic BaseModel with Literal types for strict validation.
+    The __init__ methods in Signal, Position, and Trade override the default
+    Pydantic constructor to auto-generate deterministic UUID5 ids when not provided.
+    
+    Literal types used across models:
+    - MarketState.state: "UP" | "DOWN" | "NEUTRAL"
+    - MarketState.previous_state: "UP" | "DOWN" | "NEUTRAL" | None
+    - Signal.direction: "LONG" | "SHORT" | "NEUTRAL"
+    - Position.direction: "LONG" | "SHORT"
+    - Position.status: "OPEN" | "CLOSED"
+    - Trade.action: "OPEN" | "CLOSE"
+    - ExecutionDecision.action: "OPEN_LONG" | "OPEN_SHORT" | "CLOSE" | "HOLD" | "REJECT"
+    
+    Database access via sqlite_utils.Database — mypy has known issues with
+    db["table_name"].insert() returning Table | View union type.
+    
+    Decimal arithmetic in observability.py uses Decimal | None for position PnL
+    (unsafe operations without None checks).
+  </critical-context>
+
+  <available-skills>
+    - sdd-init (for bootstrapping SDD if needed)
+    - sdd-apply (for implementing fixes as tasks)
+    - sdd-verify (for verification)
+    - go-testing (not relevant — Python project)
+    - work-unit-commits (for structured commits)
+    - branch-pr (for PR creation)
+    - customize-opencode (if editing opencode config)
+  </available-skills>
+
+  <git-workflow>
+    Repo: https://github.com/danigogri/trady-ai (PRIVATE)
+    
+    Convention per PORTABLE OS/GIT-WORKFLUX.md:
+    - Branch: fix/BL-XXX per backlog item
+    - Commit: fix: descripción (BL-XXX) or deuda: descripción (BL-XXX)
+    - PR via gh pr create --fill after each fix
+    - Email: 261095460+danigogri@users.noreply.github.com
+    
+    IMPORTANTE: git push desde PowerShell (WSL tiene gh auth rate-limited).
+    Mensaje de commit: "fix:" para bugs, "deuda:" para deuda técnica.
+    Si usás WSL y no te deja pushear, decile al usuario: 
+    "Ejecutá desde PowerShell: cd D:\dev\Trady.AI && git push"
+  </git-workflow>
+
+  <backlog-items>
+    
+    === BL-001 (deuda, media) — models.py ===
+    Problema: __init__ en Signal (línea 44), Position (línea 67), Trade (línea 90)
+    no tienen type annotations. mypy no puede verificar los **data dicts.
+    
+    Solución: Agregar `**data: Any` a los 3 __init__.
+    Antes:  def __init__(self, **data):
+    Después: def __init__(self, **data: Any) -> None:
+    
+    Archivo: src/trady_ai/core/models.py
+    Líneas: 44, 67, 90
+    Import necesario: de typing import Any (ya está importado en models.py línea 4)
+    
+    === BL-002 (deuda, media) — engine.py, observability.py, risk.py ===
+    Problema: Tipos genéricos sin argumentos: `list`, `dict` usados sin parámetros
+    de tipo. 7 ocurrencias.
+    
+    Archivos:
+    - engine.py: línea 28 ExecutionResult.decisions: list → list[ExecutionDecision],
+      trades: list → list[Trade], signals: list → list[Signal],
+      final_positions: list → list[Position], summary_stats: dict → dict[str, Any]
+    - observability.py: línea 6 def compute_summary(
+        decisions: list[ExecutionDecision], trades: list[Trade], positions: list[Position]) -> dict[str, Any]
+    - risk.py: línea 2 risk.py no importa list/dict de typing — agregar import.
+    
+    === BL-003 (deuda, media) — markov_strategy.py, position_manager.py, engine.py ===
+    Problema: Llamadas a constructores no tipados — Signal(...), Position(...), Trade(...)
+    que mypy no puede verificar porque los __init__ usan **data sin anotaciones.
+    
+    Nota: Se resuelve AUTOMÁTICAMENTE al solucionar BL-001 (anotar __init__ con **data: Any).
+    Si después de BL-001 quedan errores, tipar las llamadas a constructores explícitamente.
+    
+    === BL-004 (deuda, alta) — persistence.py ===
+    Problema: db["table_name"].insert() retorna Table | View, mypy no reconoce .insert()
+    en tipos unión. 5 ocurrencias (líneas 88, 103, 120, 139, 165).
+    
+    Solución: Agregar `# type: ignore[union-attr]` al final de cada línea
+    con db["..."].insert(...).
+    
+    Alternativa más limpia: usar cast:
+      from typing import cast
+      table = cast(sqlite_utils.Table, db["table_name"])
+      table.insert(...)
+    
+    Recomendación: Usar # type: ignore[union-attr] por ser mínimo cambio.
+    
+    === BL-005 (bug, alta) — state.py, risk.py ===
+    Problema CRÍTICO: str pasado donde se espera Literal.
+    
+    state.py línea 50:
+      state_label es str ("UP"/"DOWN"/"NEUTRAL") pero MarketState.state espera Literal.
+      Solución: from typing import cast y cast literal, o crear un helper:
+      
+      from typing import cast
+      from trady_ai.core.models import MarketState
+      _STATE_LITERALS = {"UP", "DOWN", "NEUTRAL"}
+      
+      state_label: str = ...  # computed value
+      assert state_label in _STATE_LITERALS, f"Invalid state: {state_label}"
+      new_state = MarketState(
+          state=cast(Literal["UP", "DOWN", "NEUTRAL"], state_label),
+          ...
+      )
+    
+    risk.py línea 106-109:
+      action = "OPEN_LONG" if signal.direction == "LONG" else "OPEN_SHORT"
+      # action es str, pero ExecutionDecision.action espera Literal
+      Solución: mismo patrón con cast o validación:
+      
+      from typing import cast
+      _ACTION_LITERALS = {"OPEN_LONG", "OPEN_SHORT", "CLOSE", "HOLD", "REJECT"}
+      
+      action: str = "OPEN_LONG" if signal.direction == "LONG" else "OPEN_SHORT"
+      assert action in _ACTION_LITERALS
+      return ExecutionDecision(
+          action=cast(Literal["OPEN_LONG", "OPEN_SHORT", "CLOSE", "HOLD", "REJECT"], action),
+          ...
+      )
+    
+    === BL-006 (deuda, alta) — observability.py ===
+    Problema: Decimal | None sin manejar None. 4 errores.
+    
+    Líneas 19-21:
+      pnl_total = sum((p.pnl for p in closed), Decimal("0"))
+      # p.pnl es Decimal | None, no se puede sumar directamente
+      
+      win_rate = wins / len(closed) if closed else 0.0
+      # wins = sum(1 for p in closed if p.pnl > 0) — p.pnl > 0 no funciona con None
+    
+    Línea 30:
+      running_pnl += p.pnl  # Decimal | None no se puede sumar a Decimal
+    
+    Línea 43:
+      "total_pnl": float(pnl_total),  # pnl_total podría ser None
+    
+    Solución: Filtrar None antes de operar:
+      closed_valid = [p for p in closed if p.pnl is not None]
+      wins = sum(1 for p in closed_valid if p.pnl > Decimal("0"))  # mypy sabe que no es None
+      pnl_total = sum((p.pnl for p in closed_valid), Decimal("0"))
+    
+      for p in closed_valid:
+          running_pnl += p.pnl  # safe, mypy sabe que no es None
+      win_rate = wins / len(closed_valid) if closed_valid else 0.0
+    
+    === BL-007 (deuda, baja) — position_manager.py ===
+    Problema: __init__ línea 16 sin return type annotation.
+    
+    Solución:
+      def __init__(self) -> None:
+  </backlog-items>
+
+  <verification-protocol>
+    After fixing each item:
+    1. Run: .venv/bin/mypy src/ (from project root)
+       - All errors for that BL must be resolved.
+       - Do NOT add type: ignore unless absolutely necessary (BL-004 only).
+    2. Run: .venv/bin/pytest (all tests must pass, 97% coverage)
+    3. Run: .venv/bin/ruff check src/
+    4. If all pass: git add + git commit + informar al usuario que pushee desde PowerShell
+    
+    Order recomendado: BL-005 → BL-006 → BL-004 → BL-001 → BL-002 → BL-003 → BL-007
+    (BL-005 es bug real, BL-006 puede ocultar errores runtime, BL-004 es molesto pero no bloqueante.
+    BL-001 desbloquea BL-003 automáticamente.)
+  </verification-protocol>
+
+  <do-not-change>
+    - NO modificar la lógica de negocio ni algoritmos
+    - NO cambiar la estructura de datos (modelos Pydantic)
+    - NO renombrar funciones, clases o módulos
+    - NO modificar tests existentes
+    - NO cambiar pyproject.toml ni configuraciones de herramientas
+    - NO tocar archivos en openspec/ ni PORTABLE OS/
+    - NO modificar el spec de Fase 2 (003-polymarket-integration-spec.md)
+  </do-not-change>
+
+  <user-language>
+    El usuario es rioplatense (Argentina). Si necesitás preguntarle algo,
+    hacelo en español con voseo natural. Los mensajes de commit van en inglés
+    con prefijo fix: o deuda: según corresponda y mención al BL.
+  </user-language>
+
+</context-transfer>
