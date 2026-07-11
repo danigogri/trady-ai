@@ -73,6 +73,8 @@ git pull
 - Branches cortas: un cambio por branch
 - Una branch por concepto, no por persona
 - Las branches se borran post-merge
+- Sin commits directos en main local — todo cambio (código, docs, governance,
+  cleanup) arranca desde un branch. Si no hay un branch, créelo primero.
 
 ---
 
