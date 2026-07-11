@@ -23,6 +23,13 @@ Dos cambios en el governance para que futuros ciclos no pierdan documentación:
 
 Se descartaron ~7,570 líneas de CRLF noise (line endings) que habían quedado en el working tree después del archive de Fase 2.
 
+### 4. GIT-WORKFLUX.md actualizado
+
+- **§3 (Reglas)**: nueva regla que prohíbe commits directos en `main` local —
+  todo cambio arranca desde un branch. Previene el escenario donde el agente
+  trabaja directamente sobre `main` sin branch, generando commits que luego
+  hay que rebajar con `reset --hard` post-merge.
+
 ## Por qué
 
 GitHub es una dependencia externa (Constitución B2 — Integration Hostility). Si GitHub desaparece, pierde el acceso a los PR bodies y assessment reports. La copia local en `openspec/changes/archive/` es permanente e independiente del ecosistema GitHub.
