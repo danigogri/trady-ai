@@ -13,7 +13,7 @@ class PositionManager:
     this class is the runtime source of truth, not the DB.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._positions: dict[UUID, Position] = {}
 
     def open_position(self, signal: Signal, price: Decimal, size: Decimal, config: RuntimeConfig) -> Position:

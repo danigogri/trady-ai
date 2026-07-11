@@ -1,10 +1,11 @@
 from dataclasses import dataclass, field
+from typing import Any
 
 import sqlite_utils
 import structlog
 
 from trady_ai.config.runtime_config import RuntimeConfig
-from trady_ai.core.models import MarketInput, Trade
+from trady_ai.core.models import ExecutionDecision, MarketInput, Position, Signal, Trade
 from trady_ai.core.normalization import normalize
 from trady_ai.core.observability import compute_summary
 from trady_ai.core.persistence import (
@@ -25,11 +26,11 @@ logger = structlog.get_logger()
 class ExecutionResult:
     """Result of a full engine run."""
 
-    decisions: list = field(default_factory=list)
-    trades: list = field(default_factory=list)
-    signals: list = field(default_factory=list)
-    final_positions: list = field(default_factory=list)
-    summary_stats: dict = field(default_factory=dict)
+    decisions: list[ExecutionDecision] = field(default_factory=list)
+    trades: list[Trade] = field(default_factory=list)
+    signals: list[Signal] = field(default_factory=list)
+    final_positions: list[Position] = field(default_factory=list)
+    summary_stats: dict[str, Any] = field(default_factory=dict)
 
 
 class ExecutionEngine:
@@ -141,3 +142,28 @@ class ExecutionEngine:
             result.decisions, result.trades, result.final_positions
         )
         return result
+
+    def run_from_store(self, strategy: SignalStrategy,
+                       since_seq: int = 0) -> ExecutionResult:
+        """Run engine consuming from event_store instead of explicit input list.
+
+        Reads events from event_store (since_seq onwards), converts to
+        MarketInput list, then delegates to self.run().
+
+        Phase 2 loads ALL events. Phases 6+ should implement cursor-based
+        streaming with configurable batch_size.
+
+        Args:
+            strategy: SignalStrategy implementation.
+            since_seq: Start from events with seq > since_seq. Default 0 = all.
+
+        Returns:
+            ExecutionResult: Same structure as run().
+
+        Raises:
+            ValueError: If since_seq < 0 (propagated from get_events).
+        """
+        from trady_ai.core.persistence import get_events
+
+        inputs = get_events(self._db, since_seq=since_seq)
+        return self.run(inputs, strategy)

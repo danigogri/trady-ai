@@ -1,16 +1,16 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
 from trady_ai.config.runtime_config import RuntimeConfig
-from trady_ai.core.models import ExecutionDecision, Position, Signal
+from trady_ai.core.models import Position, Signal
 from trady_ai.core.risk import RiskEnforcer
 
 
 def _make_signal(direction: str = "LONG", market_id: str = "btc-usd") -> Signal:
-    dt = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    dt = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     return Signal(
         id=uuid5(NAMESPACE_URL, f"test:{market_id}:{dt.isoformat()}"),
         timestamp=dt,
@@ -22,7 +22,7 @@ def _make_signal(direction: str = "LONG", market_id: str = "btc-usd") -> Signal:
 
 
 def _make_position(market_id: str = "btc-usd", direction: str = "LONG", status: str = "OPEN") -> Position:
-    dt = datetime(2026, 1, 1, 11, 0, tzinfo=timezone.utc)
+    dt = datetime(2026, 1, 1, 11, 0, tzinfo=UTC)
     return Position(
         id=uuid5(NAMESPACE_URL, f"position:{market_id}:{dt.isoformat()}"),
         market_id=market_id,

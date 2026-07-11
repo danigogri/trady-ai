@@ -109,11 +109,20 @@ class TestAnalyze:
 
 
 class TestRun:
-    def test_run_dry_run(self):
-        """run → output indica simulated execution."""
+    def test_run_command_no_events(self):
+        """run sin eventos → mensaje 'No events'."""
         get_settings.cache_clear()
         runner = CliRunner()
         result = runner.invoke(cli, ["run", "--market", "btc-usd"])
         assert result.exit_code == 0
-        assert "Simulated execution" in result.output
-        assert "btc-usd" in result.output
+        assert "No events" in result.output
+
+
+class TestCapture:
+    def test_capture_command_no_markets(self):
+        """capture sin --markets ni active_markets → mensaje informativo."""
+        get_settings.cache_clear()
+        runner = CliRunner()
+        result = runner.invoke(cli, ["capture"])
+        assert result.exit_code == 0
+        assert "No markets" in result.output

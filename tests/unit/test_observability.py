@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import NAMESPACE_URL, uuid5
 
@@ -9,7 +9,7 @@ from trady_ai.core.observability import compute_summary
 
 
 def _make_decision(action: str = "HOLD") -> ExecutionDecision:
-    dt = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    dt = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     return ExecutionDecision(
         signal_id=uuid5(NAMESPACE_URL, f"signal:{action}:{dt.isoformat()}"),
         action=action,
@@ -25,7 +25,7 @@ def _make_position(
     status: str = "OPEN",
     pnl: Decimal | None = None,
 ) -> Position:
-    dt = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    dt = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     return Position(
         id=uuid5(NAMESPACE_URL, f"pos:{market_id}:{dt.isoformat()}"),
         market_id=market_id,

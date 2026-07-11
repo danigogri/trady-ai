@@ -1,4 +1,5 @@
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -15,5 +16,11 @@ class RuntimeConfig(BaseModel):
     position_size: Decimal = Field(default=Decimal("10.00"), gt=Decimal("0"))
     transaction_cost_pct: float = Field(default=0.0, ge=0.0, lt=1.0)
     stop_loss_pct: float = Field(default=0.05, gt=0.0, lt=1.0)
+
+    # Execution mode
+    execution_mode: Literal["dry_run", "live"] = "dry_run"
+
+    # Order defaults
+    default_order_type: Literal["GTC"] = "GTC"
 
     model_config = {"frozen": True, "arbitrary_types_allowed": True}

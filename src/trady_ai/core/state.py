@@ -1,4 +1,5 @@
 from decimal import Decimal
+from typing import Literal, cast
 
 from trady_ai.core.models import MarketInput, MarketState
 
@@ -47,7 +48,7 @@ class MarketStateTracker:
             timestamp=market_input.timestamp,
             price=market_input.price,
             volume=market_input.volume,
-            state=state_label,
+            state=cast(Literal["UP", "DOWN", "NEUTRAL"], state_label),
             previous_state=prev_state_value,
         )
         self._states[market_id] = new_state
