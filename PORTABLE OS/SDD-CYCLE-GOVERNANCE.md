@@ -49,6 +49,9 @@ son snapshots privados, desechables, y squasheables antes del push final.
    └── Si rojo → loop 2–4
 
 5. Archive
+   ├── Archiva pr-body.md y assessment-report.md (o cualquier documento generado
+   │   para el ecosistema GitHub) en openspec/changes/archive/{cambio}/
+   │   — GitHub es una dependencia externa, no la única copia (Constitución B2)
    ├── Squash commits WIP en UN commit limpio: "feat: <change>"
    ├── Push final a GitHub
    └── Merge PR = freeze del cambio
@@ -77,9 +80,16 @@ El commit local WIP sirve como evidencia de:
 - Qué hallazgos hubo en verify #1 (verify-report.md)
 - Cómo se arreglaron (diff entre WIP y WIP-amend)
 - Qué se verificó y contra qué hash (verify-report.md)
+- Qué documentación acompañó al cambio (pr-body.md, assessment-report.md,
+  y cualquier documento generado para GitHub)
 
 Todo sobrevive en `.git/objects` hasta el archive.
 Post-archive, el squash consolida el relato final en un commit pusheado.
+
+Los documentos generados para el ecosistema GitHub (PR bodies, assessment reports,
+etc.) DEBEN archivarse localmente en openspec/changes/archive/{cambio}/ antes del
+squash. GitHub es una dependencia externa (Constitución B2 — Integration Hostility)
+y no debe ser la única copia de documentación crítica del proyecto.
 
 ---
 
