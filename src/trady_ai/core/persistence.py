@@ -9,7 +9,7 @@ from trady_ai.core.models import ExecutionDecision, MarketInput, MarketState, Po
 
 
 def init_core_tables(db: sqlite_utils.Database) -> None:
-    """Create the 5 core tables if they don't exist. Idempotent."""
+    """Create core tables if they don't exist. Idempotent."""
     db.execute(
         """
         CREATE TABLE IF NOT EXISTS market_states (
@@ -84,6 +84,7 @@ def init_core_tables(db: sqlite_utils.Database) -> None:
         """
     )
     init_event_store(db)
+    init_strategy_tables(db)
 
 
 def persist_market_state(db: sqlite_utils.Database, state: MarketState) -> None:
@@ -210,6 +211,95 @@ def init_event_store(db: sqlite_utils.Database) -> None:
         )
         """
     )
+
+
+# ── Strategy Snapshots ──────────────────────────────────────────────────────
+
+
+def init_strategy_tables(db: sqlite_utils.Database) -> None:
+    """Create strategy_snapshots table if not exists. Idempotent."""
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS strategy_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy_name TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            tick_number INTEGER NOT NULL,
+            transition_counts TEXT NOT NULL,
+            state_counts TEXT NOT NULL,
+            warmup_ticks INTEGER NOT NULL,
+            threshold_pct TEXT NOT NULL,
+            snapshot_at TEXT NOT NULL,
+            UNIQUE(strategy_name, domain, tick_number)
+        )
+        """
+    )
+
+
+def persist_strategy_snapshot(
+    db: sqlite_utils.Database,
+    domain: str,
+    strategy_name: str,
+    tick_number: int,
+    transition_counts: list[list[int]],
+    state_counts: list[int],
+    warmup_ticks: int,
+    threshold_pct: str | float,
+) -> None:
+    """Insert or replace a strategy snapshot row.
+
+    The UNIQUE(strategy_name, domain, tick_number) constraint prevents
+    duplicate tick entries. Uses INSERT OR REPLACE so re-processing the
+    same tick overwrites the previous row.
+
+    Args:
+        db: Database instance.
+        domain: Execution domain (e.g. ``"PM-5M"``).
+        strategy_name: Strategy name (e.g. ``"markov_persistence"``).
+        tick_number: Monotonically increasing tick identifier.
+        transition_counts: 3×3 matrix as nested list.
+        state_counts: Length-3 list of state visit counts.
+        warmup_ticks: Warmup period used by the engine.
+        threshold_pct: Threshold as string or float.
+    """
+    db["strategy_snapshots"].insert(  # type: ignore[union-attr]
+        {
+            "strategy_name": strategy_name,
+            "domain": domain,
+            "tick_number": tick_number,
+            "transition_counts": json.dumps(transition_counts),
+            "state_counts": json.dumps(state_counts),
+            "warmup_ticks": warmup_ticks,
+            "threshold_pct": str(threshold_pct),
+            "snapshot_at": datetime.now(UTC).isoformat(),
+        },
+        pk="id",
+        replace=True,
+    )
+
+
+def load_latest_snapshot(
+    db: sqlite_utils.Database,
+    domain: str,
+    strategy_name: str,
+) -> dict[str, Any] | None:
+    """Load the latest snapshot for a (domain, strategy_name) pair.
+
+    Args:
+        db: Database instance.
+        domain: Execution domain.
+        strategy_name: Strategy name.
+
+    Returns:
+        Dict with snapshot columns, or ``None`` if no snapshot exists.
+    """
+    rows = list(
+        db.query(
+            "SELECT * FROM strategy_snapshots WHERE domain = ? AND strategy_name = ? ORDER BY tick_number DESC LIMIT 1",
+            [domain, strategy_name],
+        )
+    )
+    return rows[0] if rows else None
 
 
 def append_event(db: sqlite_utils.Database, event: dict[str, Any]) -> int | None:
