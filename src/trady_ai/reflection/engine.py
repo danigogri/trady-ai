@@ -1,0 +1,206 @@
+"""ReflectionEngine — orchestrator for reflection analysis.
+
+Orchestrates the deterministic pipeline:
+  scope resolution → outcome analysis → signal quality analysis →
+  drift analysis → proposal generation → calibration gate check → persistence
+
+All analyzers are injected via constructor (same pattern as ExecutionEngine).
+"""
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
+
+import sqlite_utils
+
+from trady_ai.reflection.models import DriftEvent, Proposal, ReflectionReport
+from trady_ai.reflection.persistence import (
+    get_reflection_config,
+    save_drift_events,
+    save_proposals,
+    save_reflection_report,
+    set_reflection_config,
+)
+from trady_ai.reflection.proposals.generator import ProposalGenerator
+
+# Scope → timedelta mapping for time range resolution
+_SCOPE_DELTAS: dict[str, timedelta] = {
+    "session": timedelta(hours=1),
+    "daily": timedelta(hours=24),
+    "weekly": timedelta(days=7),
+}
+
+# Default minimum sessions for calibration evidence gate
+_DEFAULT_MIN_SESSIONS = 30
+
+
+class ReflectionEngine:
+    """Orchestrates reflection analysis: analyzers → proposals → persistence.
+
+    Constructor injection for all dependencies (per design ADR-1).
+
+    Args:
+        db: Database instance.
+        outcome_analyzer: OutcomeAnalyzer instance.
+        signal_quality_analyzer: SignalQualityAnalyzer instance.
+        drift_analyzer: DriftAnalyzer instance.
+        proposal_generator: ProposalGenerator instance.
+    """
+
+    def __init__(
+        self,
+        db: sqlite_utils.Database,
+        outcome_analyzer: Any,
+        signal_quality_analyzer: Any,
+        drift_analyzer: Any,
+        proposal_generator: ProposalGenerator,
+    ) -> None:
+        self._db = db
+        self._outcome_analyzer = outcome_analyzer
+        self._signal_quality_analyzer = signal_quality_analyzer
+        self._drift_analyzer = drift_analyzer
+        self._proposal_generator = proposal_generator
+
+    def reflect(
+        self,
+        scope: Literal["session", "daily", "weekly"],
+        domain: str,
+        mode: Literal["dry_run"],
+        baseline_tick: int | None = None,
+        comparison_tick: int | None = None,
+        current_params: dict[str, float] | None = None,
+    ) -> ReflectionReport:
+        """Execute the full reflection pipeline.
+
+        Args:
+            scope: Time scope for analysis (session=1h, daily=24h, weekly=7d).
+            domain: Market domain (e.g. ``"PM-5M"``).
+            mode: Execution mode (only ``"dry_run"`` supported).
+            baseline_tick: Optional baseline snapshot tick for drift comparison.
+            comparison_tick: Optional comparison snapshot tick.
+            current_params: Optional current parameter values for proposal
+                generation.
+
+        Returns:
+            ReflectionReport: Complete report with all analysis results.
+        """
+        # ── 1. Resolve time range ────────────────────────────────────────
+        delta = _SCOPE_DELTAS.get(scope, timedelta(hours=1))
+        end = datetime.now(UTC)
+        start = end - delta
+        start_str = start.isoformat()
+        end_str = end.isoformat()
+
+        # ── 2. Outcome analysis ──────────────────────────────────────────
+        outcome_summary = self._outcome_analyzer.analyze(
+            self._db, domain, start_str, end_str
+        )
+
+        # ── 3. Signal quality analysis ───────────────────────────────────
+        signal_quality = self._signal_quality_analyzer.analyze(
+            self._db, domain, start_str, end_str
+        )
+
+        # ── 4. Drift analysis (per strategy) ─────────────────────────────
+        strategy_ids = self._get_strategy_ids(domain)
+        all_drift_events: list[DriftEvent] = []
+        for sid in strategy_ids:
+            events = self._drift_analyzer.analyze(
+                self._db,
+                sid,
+                domain,
+                baseline_tick=baseline_tick,
+                comparison_tick=comparison_tick,
+            )
+            all_drift_events.extend(events)
+
+        # ── 5. Proposal generation ───────────────────────────────────────
+        all_proposals: list[Proposal] = []
+        if current_params is not None:
+            for sid in strategy_ids:
+                proposals = self._proposal_generator.generate(
+                    sid, current_params, all_drift_events
+                )
+                all_proposals.extend(proposals)
+
+        # ── 6. Assemble report ───────────────────────────────────────────
+        report = ReflectionReport(
+            scope=scope,
+            domain=domain,
+            mode=mode,
+            period_start=start,
+            period_end=end,
+            outcome_summary=outcome_summary,
+            signal_quality=signal_quality,
+            drift_events=all_drift_events,
+            proposals=all_proposals,
+            calibration_state=self._check_calibration_readiness(domain),
+            created_at=datetime.now(UTC),
+        )
+
+        # ── 7. Persist ──────────────────────────────────────────────────
+        save_reflection_report(self._db, report)
+        save_drift_events(self._db, all_drift_events)
+        save_proposals(self._db, all_proposals)
+        self._db.conn.commit()
+
+        return report
+
+    def _get_strategy_ids(self, domain: str) -> list[str]:
+        """Return distinct strategy names for the given domain."""
+        rows = self._db.query(
+            "SELECT DISTINCT strategy_name FROM strategy_snapshots WHERE domain = ?",
+            [domain],
+        )
+        return [r["strategy_name"] for r in rows]
+
+    def _check_calibration_readiness(self, domain: str) -> str:
+        """Check if domain is ready for calibration.
+
+        Per design Calibration Gate section (RFC-004):
+        - UNCALIBRATED → READY_FOR_CALIBRATION → CALIBRATED
+
+        Dual gate (both required for ``ready_for_calibration``):
+        1. Time gate: ``COUNT(DISTINCT DATE(period_start)) >= 30``
+        2. Evidence gate: ``COUNT(*) >= min_sessions``
+
+        Returns:
+            str: Current calibration state: ``"uncalibrated"``,
+                ``"ready_for_calibration"``, or ``"calibrated"``.
+        """
+        # Read current state
+        current_state = get_reflection_config(self._db, domain, "calibration_state")
+        if current_state == "calibrated":
+            return "calibrated"
+        if current_state == "ready_for_calibration":
+            return "ready_for_calibration"
+
+        # Read min_sessions config (default 30)
+        min_sessions_str = get_reflection_config(self._db, domain, "min_sessions")
+        min_sessions = (
+            int(min_sessions_str) if min_sessions_str else _DEFAULT_MIN_SESSIONS
+        )
+
+        # Time gate: at least 30 distinct calendar days with reports
+        time_row = self._db.execute(
+            "SELECT COUNT(DISTINCT DATE(period_start)) FROM reflection_reports "
+            "WHERE domain = ?",
+            [domain],
+        ).fetchone()
+        time_gate = time_row[0] if time_row else 0
+
+        # Evidence gate: at least min_sessions total reports
+        evidence_row = self._db.execute(
+            "SELECT COUNT(*) FROM reflection_reports WHERE domain = ?",
+            [domain],
+        ).fetchone()
+        evidence_gate = evidence_row[0] if evidence_row else 0
+
+        if time_gate >= 30 and evidence_gate >= min_sessions:
+            # Auto-transition to ready_for_calibration
+            set_reflection_config(
+                self._db, domain, "calibration_state", "ready_for_calibration"
+            )
+            return "ready_for_calibration"
+
+        return "uncalibrated"
