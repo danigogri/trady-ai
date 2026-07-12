@@ -1,13 +1,16 @@
 # openspec/config.yaml — Trady AI
+# Last updated: 2026-07-11 (sdd-init)
 schema: spec-driven
 
 context: |
-  Tech stack: Python (planned), SQLite (planned), local-first execution
-  Architecture: Deterministic-first financial infrastructure, layered (Governance > Intelligence > Reflection > Core > Adapters > Platforms)
-  Testing: No test runner detected — strict_tdd disabled until code exists
-  Style: RFC-driven documentation hierarchy (9 levels), deterministic-first philosophy, platform-agnostic, model-agnostic
+  Tech stack: Python 3.12, pydantic-settings, click, structlog, httpx, sqlite-utils, numpy, websockets
+  Architecture: 6-layer (Governance > Intelligence > Reflection > Core > Adapters > Platforms)
+  Testing: pytest 199 tests, 91% coverage, mypy strict (0 errors, 29 files), ruff clean
+  Style: RFC-driven documentation hierarchy, deterministic-first philosophy, platform-agnostic, model-agnostic
+  Entry point: cli/main.py (Click)
+  Package: src/trady_ai (hatchling build)
 
-strict_tdd: false
+strict_tdd: true
 
 session:
   execution_mode: interactive
@@ -16,14 +19,14 @@ session:
   review_budget_lines: 400
 
 testing:
-  runner: null
-  unit: { available: false, tool: null }
-  integration: { available: false, tool: null }
+  runner: pytest
+  unit: { available: true, tool: pytest, command: "pytest" }
+  integration: { available: true, tool: pytest, command: "pytest" }
   e2e: { available: false, tool: null }
-  coverage: { available: false, command: null }
-  linter: { available: false, command: null }
-  type_checker: { available: false, command: null }
-  formatter: { available: false, command: null }
+  coverage: { available: true, command: "pytest --cov=trady_ai --cov-report=term-missing", threshold: 90 }
+  linter: { available: true, command: "ruff check ." }
+  type_checker: { available: true, command: "mypy src/", strict: true }
+  formatter: { available: true, command: "ruff format ." }
 
 rules:
   proposal:
@@ -43,11 +46,11 @@ rules:
     - Keep tasks completable in one session
   apply:
     - Follow existing code patterns
-    tdd: false
-    test_command: ""
+    tdd: true
+    test_command: "pytest"
   verify:
-    test_command: ""
-    build_command: ""
-    coverage_threshold: 0
+    test_command: "pytest"
+    build_command: "python -m build"
+    coverage_threshold: 90
   archive:
     - Warn before merging destructive deltas

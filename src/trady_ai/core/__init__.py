@@ -1,6 +1,5 @@
 from trady_ai.core.engine import ExecutionEngine, ExecutionResult
 from trady_ai.core.ingestion import read_csv
-from trady_ai.core.markov_strategy import MarkovStrategy
 from trady_ai.core.models import (
     ExecutionDecision,
     MarketInput,
@@ -18,6 +17,9 @@ from trady_ai.core.risk import RiskEnforcer
 from trady_ai.core.signal_strategy import SignalStrategy
 from trady_ai.core.state import MarketStateTracker
 
+# MarkovStrategy re-export: use from trady_ai.core.markov_strategy import MarkovStrategy
+# (stub in core/markov_strategy.py provides backward-compat without circular import)
+
 __all__ = [
     "ExecutionDecision",
     "ExecutionEngine",
@@ -25,7 +27,7 @@ __all__ = [
     "MarketInput",
     "MarketState",
     "MarketStateTracker",
-    "MarkovStrategy",
+    # "MarkovStrategy" — re-export via core/markov_strategy.py stub (avoids circular import)
     "Position",
     "PositionManager",
     "RiskEnforcer",

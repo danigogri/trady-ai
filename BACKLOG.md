@@ -2,7 +2,7 @@
 
 > Generado desde BACKLOG-PROTOCOL v1
 > Auditoría inicial: 2026-07-09
-> Última actualización: 2026-07-09 (re-poblado post Verify #1 Fase 2)
+> Última actualización: 2026-07-11 (BL-018 agregado post Verify Fase 3)
 
 ---
 
@@ -76,6 +76,16 @@ Se detectó un bug preexistente durante el triage: `init_db` en `db/database.py`
 | BLs resueltos | 0/9 | 9/9 (BL-009..017) |
 | Hallazgos adicionales | — | 1 (SQLite threading, fixeado) |
 | Veredicto | FAIL | Pendiente Verify #2 |
+
+---
+
+## Fase 3 — Strategy Infrastructure (Verify hallazgo)
+
+> Fuente: `openspec/changes/fase-3-strategy-infrastructure/verify-report.md`
+> Veredicto verify: PASS — 0 CRITICAL, 0 WARNING, 1 SUGGESTION
+> La SUGGESTION no constituye incumplimiento de los criterios de aceptación de la Fase 3, pero sí una deuda arquitectónica respecto al contrato ideal de un Strategy Snapshot. Dado su impacto funcional prácticamente nulo y el costo de evolucionar el schema, se difiere deliberadamente para una futura evolución del persistence layer.
+
+[BL-018] | deuda | baja | strategies/markov/persistence.py, core/persistence.py | `_last_state` no se persiste en `strategy_snapshots` — la primera transición post-restore no se registra (1 data point perdido por ciclo). `restore()` explícitamente setea `_last_state = None`. `evaluate()` no se ve afectado (solo usa `_transition_counts`). El contrato arquitectónico ideal del snapshot exige resumability total (estado indistinguible del pre-snapshot), lo cual requiere `_last_state`. Fix diferido: requiere agregar columna `last_state TEXT` al schema + tests de roundtrip con transiciones. | abierto
 
 ---
 
