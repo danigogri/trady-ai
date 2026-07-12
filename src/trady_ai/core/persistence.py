@@ -66,6 +66,7 @@ def init_core_tables(db: sqlite_utils.Database) -> None:
         )
         """
     )
+    db.execute("CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp)")
     db.execute(
         """
         CREATE TABLE IF NOT EXISTS execution_log (
@@ -85,6 +86,7 @@ def init_core_tables(db: sqlite_utils.Database) -> None:
     )
     init_event_store(db)
     init_strategy_tables(db)
+    init_reflection_tables(db)
 
 
 def persist_market_state(db: sqlite_utils.Database, state: MarketState) -> None:
@@ -187,6 +189,53 @@ def load_execution_log(db: sqlite_utils.Database) -> list[dict[str, Any]]:
     return list(db["execution_log"].rows_where(order_by="tick_number"))
 
 
+# ── Time-Bounded Query Helpers ────────────────────────────────────────────────
+
+
+def query_trades_by_time_range(
+    db: sqlite_utils.Database, start: str, end: str
+) -> list[dict[str, Any]]:
+    """Return trades within time range, ordered by timestamp ASC.
+
+    Args:
+        db: Database instance.
+        start: ISO-8601 start timestamp (inclusive).
+        end: ISO-8601 end timestamp (inclusive).
+
+    Returns:
+        List of trade row dicts matching the time range.
+    """
+    return list(
+        db["trades"].rows_where(
+            "timestamp >= ? AND timestamp <= ?",
+            [start, end],
+            order_by="timestamp ASC",
+        )
+    )
+
+
+def query_signals_by_time_range(
+    db: sqlite_utils.Database, start: str, end: str
+) -> list[dict[str, Any]]:
+    """Return signals within time range, ordered by timestamp ASC.
+
+    Args:
+        db: Database instance.
+        start: ISO-8601 start timestamp (inclusive).
+        end: ISO-8601 end timestamp (inclusive).
+
+    Returns:
+        List of signal row dicts matching the time range.
+    """
+    return list(
+        db["signals"].rows_where(
+            "timestamp >= ? AND timestamp <= ?",
+            [start, end],
+            order_by="timestamp ASC",
+        )
+    )
+
+
 # ── Event Store ──────────────────────────────────────────────────────────────
 
 
@@ -211,6 +260,7 @@ def init_event_store(db: sqlite_utils.Database) -> None:
         )
         """
     )
+    db.execute("CREATE INDEX IF NOT EXISTS idx_event_store_timestamp ON event_store(timestamp)")
 
 
 # ── Strategy Snapshots ──────────────────────────────────────────────────────
@@ -403,3 +453,95 @@ def reset_event_store(db: sqlite_utils.Database) -> None:
     """
     db.execute("DROP TABLE IF EXISTS event_store")
     init_event_store(db)
+
+
+# ── Reflection Tables ─────────────────────────────────────────────────────────
+
+
+def init_reflection_tables(db: sqlite_utils.Database) -> None:
+    """Create reflection tables if they don't exist. Idempotent.
+
+    Creates: reflection_reports, drift_events, proposals, reflection_config
+    with corresponding indexes. Called from init_core_tables() or independently.
+    """
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reflection_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            period_start TEXT NOT NULL,
+            period_end TEXT NOT NULL,
+            report_data TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_reflection_reports_period
+        ON reflection_reports(period_start, period_end)
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS drift_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy_id TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            metric TEXT NOT NULL,
+            previous_value REAL NOT NULL,
+            current_value REAL NOT NULL,
+            threshold REAL NOT NULL,
+            deviation_pct REAL NOT NULL,
+            detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+            acknowledged INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_drift_events_strategy_domain
+        ON drift_events(strategy_id, domain)
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS proposals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy_id TEXT NOT NULL,
+            parameter_name TEXT NOT NULL,
+            current_value REAL NOT NULL,
+            proposed_value REAL NOT NULL,
+            range_min REAL NOT NULL,
+            range_max REAL NOT NULL,
+            justification TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_proposals_strategy_id
+        ON proposals(strategy_id)
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reflection_config (
+            domain TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (domain, key)
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_reflection_config_domain
+        ON reflection_config(domain)
+        """
+    )

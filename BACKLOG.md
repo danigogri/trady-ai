@@ -2,7 +2,7 @@
 
 > Generado desde BACKLOG-PROTOCOL v1
 > Auditoría inicial: 2026-07-09
-> Última actualización: 2026-07-11 (BL-018 agregado post Verify Fase 3)
+> Última actualización: 2026-07-11 (BL-019 agregado — secuencia Fase 4 → Paper Trading)
 
 ---
 
@@ -89,11 +89,21 @@ Se detectó un bug preexistente durante el triage: `init_db` en `db/database.py`
 
 ---
 
+## Roadmap / Operational Sequencing
+
+> Fuente: Análisis arquitectónico post-Fase 3 — secuencia Fase 4 vs. Paper Trading.
+> Decisión tomada: 2026-07-11. Fundamento: RFC-000, RFC-002, RFC-004, MASTER-ROADMAP-001.
+
+[BL-019] | decisión | alta | roadmap, RFC-004, Fase 2 dry_run | **Paper Trading Validation Period debe ocurrir DESPUÉS de completar Fase 4 (Reflection Systems).** La iteración `dry_run` de Fase 2 (capture real + pipeline sin firmar) existe, pero sin Fase 4 la evaluación de decisiones vs. outcomes reales sería manual, no reproducible, y no auditable — violando RFC-000 Auditability Doctrine (línea 363-381) y RFC-004 Proposal Doctrine (línea 161-170). Secuencia correcta: Fase 4 SDD completo → Paper Trading con Reflection desde día uno → Governance Review basado en evidencia determinística → autorización (o no) de `execution_mode=live`. Evitar tooling temporal que se descarte. | abierto
+
+---
+
 ## 🧠 NOTAS
 
 - **Estado Fase 1**: ✅ Limpia. mypy: 0 errores. pytest: 117 pass. Coverage: 97%.
-- **Estado Fase 2**: Todas las fixes aplicadas y validadas localmente. Pendiente Verify #2 contra commit `73990ea`.
-- **Próximo paso**: Verify #2 (sub-agent fresh) contra HEAD `73990ea`. Si verde → archive → squash → push.
+- **Estado Fase 2**: ✅ Archive completo. 199 tests. 91% coverage. Mergeado a main.
+- **Estado Fase 3**: ✅ Archive completo. 284 tests. 92.40% coverage. Mergeado a main.
+- **Próximo paso**: Fase 4 — Reflection Systems (RFC-004). BL-019 pendiente como recordatorio post-Fase 4.
 - **Lecciones aprendidas**:
   - Cambios con riesgo de impacto colateral requieren Assessment Report + Documento Contrato antes de aplicar.
   - Cambios triviales (renombres locales, annotations) pueden aplicarse directo con nota en commit.

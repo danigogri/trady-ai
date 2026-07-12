@@ -1,4 +1,5 @@
 import time
+from typing import Any
 
 import click
 
@@ -215,3 +216,253 @@ def capture(markets: str, reset: bool) -> None:
     finally:
         capture_obj.stop()
         click.echo("Capture stopped.")
+
+
+# ── Reflection Analysis Commands ──────────────────────────────────────────────
+
+
+@cli.group()
+def reflect() -> None:
+    """Post-execution analysis: evaluate outcomes, detect drift, generate proposals."""
+    pass
+
+
+@reflect.command(name="analyze")
+@click.option("--scope", type=click.Choice(["session", "daily", "weekly"]), default="session",
+              help="Analysis window scope")
+@click.option("--domain", default="PM-5M", help="Trading domain to analyze")
+@click.option("--mode", type=click.Choice(["dry_run"]), default="dry_run",
+              help="Execution mode (only dry_run supported in Phase 4)")
+@click.option("--baseline-tick", type=int, default=None,
+              help="Baseline snapshot tick for drift comparison (default: second-to-latest)")
+@click.option("--comparison-tick", type=int, default=None,
+              help="Comparison snapshot tick for drift comparison (default: latest)")
+def cmd_analyze(scope: str, domain: str, mode: str,
+                baseline_tick: int | None, comparison_tick: int | None) -> None:
+    """Run reflection analysis: outcomes, signal quality, drift detection."""
+    from trady_ai.config import get_settings
+    from trady_ai.core.persistence import init_core_tables
+    from trady_ai.db.database import get_db
+
+    settings = get_settings()
+    db = get_db(settings)
+    init_core_tables(db)
+    engine = _build_reflection_engine(db)
+    report = engine.reflect(
+        scope=scope,
+        domain=domain,
+        mode=mode,
+        baseline_tick=baseline_tick,
+        comparison_tick=comparison_tick,
+    )
+    click.echo(_format_analysis_output(report))
+
+
+@reflect.command()
+@click.option("--domain", default="PM-5M", help="Trading domain")
+def report(domain: str) -> None:
+    """Show the most recent reflection report for a domain."""
+    import json
+
+    from trady_ai.config import get_settings
+    from trady_ai.core.persistence import init_core_tables
+    from trady_ai.db.database import get_db
+
+    settings = get_settings()
+    db = get_db(settings)
+    init_core_tables(db)
+
+    rows = list(db.query(
+        "SELECT * FROM reflection_reports WHERE domain = ? ORDER BY id DESC LIMIT 1",
+        [domain],
+    ))
+    if not rows:
+        click.echo(f"No reflection reports found for domain: {domain}")
+        return
+
+    row = rows[0]
+    click.echo(f"Reflection Report #{row['id']}")
+    click.echo(f"  Scope: {row['scope']}")
+    click.echo(f"  Domain: {row['domain']}")
+    click.echo(f"  Mode: {row['mode']}")
+    click.echo(f"  Period: {row['period_start']} \u2014 {row['period_end']}")
+    click.echo(f"  Created: {row['created_at']}")
+
+    # Parse and display report summary
+    try:
+        data = json.loads(row["report_data"])
+    except (json.JSONDecodeError, TypeError):
+        click.echo("  (report data unavailable)")
+        return
+
+    if "outcome_summary" in data:
+        os = data["outcome_summary"]
+        click.echo("")
+        click.echo("  Outcome Summary:")
+        click.echo(f"    Total trades: {os.get('total_trades', 'N/A')}")
+        click.echo(f"    Win rate: {os.get('win_rate', 0.0):.1%}")
+        click.echo(f"    Total PnL: ${os.get('total_pnl', '0.00')}")
+
+    if "signal_quality" in data:
+        sq = data["signal_quality"]
+        click.echo("")
+        click.echo("  Signal Quality:")
+        click.echo(f"    Total signals: {sq.get('total_signals', 'N/A')}")
+        click.echo(f"    Signal accuracy: {sq.get('signal_accuracy', 0.0):.1%}")
+
+    if "drift_events" in data and data["drift_events"]:
+        click.echo("")
+        click.echo("  Drift Alerts:")
+        for ev in data["drift_events"]:
+            click.echo(
+                f"    - {ev['metric']}: {ev['deviation_pct']:.1f}% deviation "
+                f"(threshold: {ev['threshold']:.0%})"
+            )
+    else:
+        click.echo("")
+        click.echo("  Drift Alerts: none")
+
+    if "proposals" in data and data["proposals"]:
+        click.echo("")
+        click.echo("  Proposals:")
+        for prop in data["proposals"]:
+            click.echo(
+                f"    - {prop['parameter_name']}: {prop['current_value']} \u2192 "
+                f"{prop['proposed_value']} ({prop['status']})"
+            )
+    else:
+        click.echo("")
+        click.echo("  Proposals: none")
+
+
+@reflect.command()
+@click.option("--domain", default="PM-5M", help="Trading domain")
+def propose(domain: str) -> None:
+    """Generate bounded parameter proposals from latest drift analysis."""
+    from trady_ai.config import get_settings
+    from trady_ai.core.persistence import init_core_tables
+    from trady_ai.db.database import get_db
+
+    settings = get_settings()
+    db = get_db(settings)
+    init_core_tables(db)
+    engine = _build_reflection_engine(db)
+
+    # Default current parameter values for proposal generation
+    current_params: dict[str, float] = {
+        "warmup_ticks": 50.0,
+        "threshold_pct": 0.001,
+    }
+
+    # Run reflect with daily scope to generate drift-based proposals
+    report = engine.reflect(
+        scope="daily",
+        domain=domain,
+        mode="dry_run",
+        current_params=current_params,
+    )
+
+    if not report.proposals:
+        click.echo(f"No proposals generated for domain: {domain}")
+        return
+
+    click.echo(f"Proposals for {domain}:")
+    for p in report.proposals:
+        click.echo(f"  {p.parameter_name}: {p.current_value} \u2192 {p.proposed_value}")
+        click.echo(f"    Range: [{p.range_min}, {p.range_max}]")
+        click.echo(f"    Status: {p.status}")
+        click.echo(f"    Justification: {p.justification}")
+        click.echo("")
+
+
+# ── Reflection Helpers ────────────────────────────────────────────────────────
+
+
+def _build_reflection_engine(db: object) -> Any:
+    """Factory: build ReflectionEngine with all dependencies wired."""
+    from trady_ai.reflection.analyzers.drift import DriftAnalyzer
+    from trady_ai.reflection.analyzers.outcome import OutcomeAnalyzer
+    from trady_ai.reflection.analyzers.signal_quality import SignalQualityAnalyzer
+    from trady_ai.reflection.engine import ReflectionEngine
+    from trady_ai.reflection.proposals.generator import ProposalGenerator
+
+    # db is sqlite_utils.Database; we keep param as object to avoid top-level
+    # import of sqlite_utils in this CLI module
+    assert hasattr(db, "execute"), "db must be a sqlite_utils.Database"
+
+    return ReflectionEngine(
+        db=db,  # type: ignore[arg-type]
+        outcome_analyzer=OutcomeAnalyzer(),
+        signal_quality_analyzer=SignalQualityAnalyzer(),
+        drift_analyzer=DriftAnalyzer(),
+        proposal_generator=ProposalGenerator(),
+    )
+
+
+def _format_analysis_output(report: object) -> str:
+    """Format a ReflectionReport for CLI display."""
+
+    from trady_ai.reflection.models import ReflectionReport
+
+    assert isinstance(report, ReflectionReport)
+    r: ReflectionReport = report
+
+    lines: list[str] = []
+    lines.append("Reflection Analysis Report")
+    lines.append(f"  Scope: {r.scope}")
+    lines.append(f"  Domain: {r.domain}")
+    lines.append(f"  Mode: {r.mode}")
+    lines.append(
+        f"  Period: {r.period_start.isoformat()} \u2014 {r.period_end.isoformat()}"
+    )
+    lines.append(f"  Calibration: {r.calibration_state}")
+
+    if r.outcome_summary is not None:
+        os = r.outcome_summary
+        lines.append("")
+        lines.append("  Outcome Summary:")
+        lines.append(f"    Total trades: {os.total_trades}")
+        lines.append(f"    Win rate: {os.win_rate:.1%}")
+        lines.append(f"    Total PnL: ${os.total_pnl}")
+        lines.append(f"    Avg PnL/trade: ${os.avg_pnl_per_trade}")
+        lines.append(f"    Max drawdown: ${os.max_drawdown}")
+    else:
+        lines.append("")
+        lines.append("  Outcome Summary: (none)")
+
+    if r.signal_quality is not None:
+        sq = r.signal_quality
+        lines.append("")
+        lines.append("  Signal Quality:")
+        lines.append(f"    Total signals: {sq.total_signals}")
+        lines.append(f"    Signal accuracy: {sq.signal_accuracy:.1%}")
+        lines.append(f"    Avg confidence: {sq.avg_confidence:.2f}")
+    else:
+        lines.append("")
+        lines.append("  Signal Quality: (none)")
+
+    if r.drift_events:
+        lines.append("")
+        lines.append("  Drift Alerts:")
+        for ev in r.drift_events:
+            lines.append(
+                f"    - {ev.metric}: {ev.deviation_pct:.1f}% deviation "
+                f"(threshold: {ev.threshold:.0%})"
+            )
+    else:
+        lines.append("")
+        lines.append("  Drift Alerts: none")
+
+    if r.proposals:
+        lines.append("")
+        lines.append("  Proposals:")
+        for p in r.proposals:
+            lines.append(
+                f"    - {p.parameter_name}: {p.current_value} \u2192 "
+                f"{p.proposed_value} ({p.status})"
+            )
+    else:
+        lines.append("")
+        lines.append("  Proposals: none")
+
+    return "\n".join(lines)
