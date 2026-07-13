@@ -218,6 +218,109 @@ def capture(markets: str, reset: bool) -> None:
         click.echo("Capture stopped.")
 
 
+# ── Paper Trading Commands ─────────────────────────────────────────────────────
+
+
+@cli.group()
+def paper_trade() -> None:
+    """Paper Trading operational commands."""
+    pass
+
+
+@paper_trade.command()
+@click.option("--scope", default="daily", help="Time scope (default: daily)")
+@click.option("--domain", required=True, help="Market domain (e.g. PM-5M)")
+@click.option("--markets", multiple=True, help="Market condition IDs")
+@click.option("--non-interactive", is_flag=True, default=False, help="Timed capture without prompts")
+def session(scope: str, domain: str, markets: tuple[str, ...], non_interactive: bool) -> None:
+    """Run a paper trading session."""
+    from trady_ai.config import get_settings
+    from trady_ai.db.database import get_db
+
+    settings = get_settings()
+    db = get_db(settings)
+
+    from trady_ai.paper_trading.session import PaperTradingSession
+
+    market_ids = list(markets) if markets else []
+    paper_session = PaperTradingSession(db)
+    report = paper_session.run_session(
+        scope=scope,
+        domain=domain,
+        market_ids=market_ids,
+        non_interactive=non_interactive,
+    )
+
+    has_error = "ERROR" in report.stage_timestamps
+
+    click.echo(f"Paper Trading Session — Day {report.day}, Domain: {report.domain}")
+    click.echo(f"  State: {'ERROR' if has_error else 'COMPLETE'}")
+    click.echo(f"  Events: {report.event_count}, Trades: {report.trade_count}")
+    click.echo(f"  Reflection report: #{report.reflection_report_id or 'N/A'}")
+    click.echo(f"  Calibration: {report.calibration_state}")
+
+    if has_error:
+        critical = [v for v in report.contract_results if v.severity == "CRITICAL"]
+        if critical:
+            click.echo("  Contract violations:")
+            for v in critical:
+                click.echo(f"    - [{v.severity}] {v.contract_name}: {v.detail}")
+        raise SystemExit(1)
+
+    raise SystemExit(0)
+
+
+@paper_trade.command(name="status")
+def paper_trade_status() -> None:
+    """Show paper trading progress (day N/30)."""
+    from trady_ai.config import get_settings
+    from trady_ai.db.database import get_db
+
+    settings = get_settings()
+    db = get_db(settings)
+
+    from trady_ai.core.persistence import init_core_tables
+
+    init_core_tables(db)
+
+    row = db.execute(
+        "SELECT COUNT(DISTINCT DATE(created_at)) FROM reflection_reports"
+    ).fetchone()
+    report_days = int(row[0]) if row and row[0] else 0
+
+    click.echo(f"Paper Trading Progress: Day {report_days}/30")
+
+
+@paper_trade.command()
+@click.option("--day", type=int, required=True, help="Session day to bundle")
+@click.option("--domain", default="PM-5M", help="Market domain")
+def bundle(day: int, domain: str) -> None:
+    """Regenerate evidence bundle for a past day."""
+    from trady_ai.config import get_settings
+    from trady_ai.db.database import get_db
+
+    settings = get_settings()
+    db = get_db(settings)
+
+    from trady_ai.paper_trading.bundler import EvidenceBundler
+
+    bundler_obj = EvidenceBundler(db)
+    try:
+        bundle_path = bundler_obj.regenerate_bundle(day, domain)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+    manifest_file = bundle_path / "manifest.json"
+    click.echo(f"Bundle generated: {bundle_path}")
+    if manifest_file.exists():
+        import json
+
+        manifest = json.loads(manifest_file.read_text())
+        click.echo(f"  Artifacts: {', '.join(manifest.get('artifact_checksums', {}).keys())}")
+    raise SystemExit(0)
+
+
 # ── Reflection Analysis Commands ──────────────────────────────────────────────
 
 
