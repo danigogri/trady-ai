@@ -94,7 +94,11 @@ Se detectó un bug preexistente durante el triage: `init_db` en `db/database.py`
 > Fuente: Análisis arquitectónico post-Fase 3 — secuencia Fase 4 vs. Paper Trading.
 > Decisión tomada: 2026-07-11. Fundamento: RFC-000, RFC-002, RFC-004, MASTER-ROADMAP-001.
 
-[BL-019] | decisión | alta | roadmap, RFC-004, Fase 2 dry_run | **Paper Trading Validation Period debe ocurrir DESPUÉS de completar Fase 4 (Reflection Systems).** La iteración `dry_run` de Fase 2 (capture real + pipeline sin firmar) existe, pero sin Fase 4 la evaluación de decisiones vs. outcomes reales sería manual, no reproducible, y no auditable — violando RFC-000 Auditability Doctrine (línea 363-381) y RFC-004 Proposal Doctrine (línea 161-170). Secuencia correcta: Fase 4 SDD completo → Paper Trading con Reflection desde día uno → Governance Review basado en evidencia determinística → autorización (o no) de `execution_mode=live`. Evitar tooling temporal que se descarte. | abierto
+[BL-019] | decisión | alta | roadmap, RFC-004, Fase 2 dry_run | **Paper Trading Validation Period debe ocurrir DESPUÉS de completar Fase 4 (Reflection Systems).** La iteración `dry_run` de Fase 2 (capture real + pipeline sin firmar) existe, pero sin Fase 4 la evaluación de decisiones vs. outcomes reales sería manual, no reproducible, y no auditable — violando RFC-000 Auditability Doctrine (línea 363-381) y RFC-004 Proposal Doctrine (línea 161-170). Secuencia correcta: Fase 4 SDD completo → Paper Trading con Reflection desde día uno → Governance Review basado en evidencia determinística → autorización (o no) de `execution_mode=live`. Evitar tooling temporal que se descarte. | cerrado
+
+[BL-020] | deuda | baja | paper-trading, contracts | **`dry_run_enforced("dry_run")` no llama a `validate_execution_secrets()`.** La implementación actual usa string comparison directo en `contracts.py:37` en vez de delegar a `security/polymarket.py:16`. Son funcionalmente equivalentes porque `validate_execution_secrets()` con `execution_mode="dry_run"` es un no-op (`return` inmediato en línea 29-30). El safety net real está en `ExecutionEngine(dry_run=True)` hardcodeado en `session.py:352`. La spec (REQ-PT-002, línea 37) referencia `validate_execution_secrets()` como mecanismo de validación, creando una discrepancia documental. Sin impacto operacional — corregir solo si cambia el contrato de seguridad o si se reutiliza `dry_run_enforced()` en modo live. | abierto
+
+[BL-021] | deuda | baja | paper-trading, session | **`_compute_day()` usa `COUNT(*)` en vez de `COUNT(DISTINCT DATE())`.** La query en `session.py:380` cuenta filas totales de `reflection_reports` en vez de días distintos. `temporal_integrity()` (`contracts.py:88`) previene sesiones duplicadas por día usando `datetime.now(UTC)`, así que en operación normal ambas queries son equivalentes. Impacto cosmético: si existieran múltiples reports el mismo día (por inserción manual o scope distinto), los directorios de bundle saltarían números (`dia-007/`, `dia-009/`). No afecta evidencia, replayabilidad, calibración, ni governance. Corregir si `temporal_integrity()` se relaja en el futuro. | abierto
 
 ---
 
@@ -103,7 +107,7 @@ Se detectó un bug preexistente durante el triage: `init_db` en `db/database.py`
 - **Estado Fase 1**: ✅ Limpia. mypy: 0 errores. pytest: 117 pass. Coverage: 97%.
 - **Estado Fase 2**: ✅ Archive completo. 199 tests. 91% coverage. Mergeado a main.
 - **Estado Fase 3**: ✅ Archive completo. 284 tests. 92.40% coverage. Mergeado a main.
-- **Próximo paso**: Fase 4 — Reflection Systems (RFC-004). BL-019 pendiente como recordatorio post-Fase 4.
+- **Próximo paso**: Fase 5 — Paper Trading (Operational Sequencer). BL-019 ahora cerrado (Fase 4 completada, Paper Trading arranca).
 - **Lecciones aprendidas**:
   - Cambios con riesgo de impacto colateral requieren Assessment Report + Documento Contrato antes de aplicar.
   - Cambios triviales (renombres locales, annotations) pueden aplicarse directo con nota en commit.
