@@ -81,6 +81,7 @@ class PaperTradingSession:
         domain: str,
         market_ids: list[str],
         non_interactive: bool = False,
+        duration: int = 60,
     ) -> SessionReport:
         """Execute full session lifecycle in a single invocation.
 
@@ -94,6 +95,7 @@ class PaperTradingSession:
             market_ids: List of market condition IDs to capture.
             non_interactive: When ``True``, uses timed capture instead of
                 waiting for user input.
+            duration: Capture window in seconds (default 60).
 
         Returns:
             ``SessionReport`` with stage timestamps, contract results, and
@@ -106,6 +108,7 @@ class PaperTradingSession:
             event_count=0,
             trade_count=0,
             reflection_report_id=None,
+            market_ids=market_ids,
         )
 
         # Collect ALL contract violations across stages
@@ -127,7 +130,7 @@ class PaperTradingSession:
             if SessionState.CAPTURING not in skip_stages:
                 self._record_stage(report, SessionState.CAPTURING)
                 try:
-                    self._do_capture(market_ids, non_interactive)
+                    self._do_capture(market_ids, non_interactive, duration)
                 except Exception:
                     logger.exception("capture_stage_failed")
                     self._record_stage(report, SessionState.ERROR)
@@ -138,6 +141,31 @@ class PaperTradingSession:
 
             # Count events
             report.event_count = self._count_events()
+
+            # ── Evidence guard ────────────────────────────────────────────────
+            # Per spec: CAPTURING → ERROR when event_store has zero new events.
+            # Only active when capture actually ran (not skipped by reconstruction).
+            if SessionState.CAPTURING not in skip_stages and report.event_count == 0:
+                logger.error(
+                    "capture_produced_no_events",
+                    day=day,
+                    domain=domain,
+                    market_ids=market_ids,
+                )
+                all_violations.append(
+                    ContractViolation(
+                        contract_name="EVIDENCE_COMPLETENESS",
+                        severity="CRITICAL",
+                        detail=(
+                            f"Capture completed but produced zero events "
+                            f"for domain={domain}, day={day}"
+                        ),
+                        timestamp=datetime.now(UTC).isoformat(),
+                    )
+                )
+                self._record_stage(report, SessionState.ERROR)
+                report.contract_results = all_violations
+                return report
 
             # ── EXECUTING ────────────────────────────────────────────────────
             if SessionState.EXECUTING not in skip_stages:
@@ -225,7 +253,12 @@ class PaperTradingSession:
         """Evaluate gating contracts. Returns False on CRITICAL violations."""
         violations.extend(dry_run_enforced("dry_run"))
         violations.extend(no_real_funds(self._db))
-        violations.extend(temporal_integrity(self._db, report.day, domain))
+        # Compute last_processed_seq from execution_log for per-seq overlap check
+        last_seq_row = self._db.execute(
+            "SELECT COALESCE(MAX(tick_number), 0) FROM execution_log"
+        ).fetchone()
+        last_processed_seq = int(last_seq_row[0]) if last_seq_row else 0
+        violations.extend(temporal_integrity(self._db, domain, last_processed_seq))
         violations.extend(validate_isolation_boundary())
 
         critical = [v for v in violations if v.severity == "CRITICAL"]
@@ -252,11 +285,18 @@ class PaperTradingSession:
             return False
         return True
 
-    def _do_capture(self, market_ids: list[str], non_interactive: bool) -> None:
+    def _do_capture(
+        self, market_ids: list[str], non_interactive: bool, duration: int = 60
+    ) -> None:
         """Run event capture for the given market IDs.
 
-        In non-interactive mode, collects events for a short duration.
+        In non-interactive mode, collects events for ``duration`` seconds.
         In interactive mode, waits for user to press Ctrl+C.
+
+        Args:
+            market_ids: List of market condition IDs to capture.
+            non_interactive: When ``True``, uses timed capture.
+            duration: Capture window in seconds (default 60).
         """
         from trady_ai.adapters.polymarket import EventCapture
 
@@ -269,8 +309,8 @@ class PaperTradingSession:
 
         try:
             if non_interactive:
-                # Timed capture — collect events for up to 60 seconds
-                timeout = 60
+                # Timed capture — collect events for up to ``duration`` seconds
+                timeout = duration
                 start = time.monotonic()
                 while capture.is_running and (time.monotonic() - start) < timeout:
                     time.sleep(1)
@@ -302,39 +342,70 @@ class PaperTradingSession:
     # ── Reconstruction ──────────────────────────────────────────────────────
 
     def _reconstruct_stages(self, domain: str) -> set[str]:
-        """Detect which stages are already complete from persisted evidence.
+        """Per-clock reconstruction — no ``DATE(timestamp) = today``.
 
-        Returns a set of state names to skip.
+        Uses per-clock sequence tracking to detect interrupted sessions:
+
+        - Trades exist but no matching reflection report → interrupted after
+          EXECUTING → skip CAPTURING + EXECUTING, resume at REFLECTING.
+
+        For normal sub-daily execution (all sessions complete), NO stages are
+        skipped — every session runs capture, execute, and reflect independently.
+        Per-clock tracking at the data level (``since_seq`` in execution engine)
+        ensures event processing is idempotent.
+
+        Returns:
+            set[str]: Stage names to skip.
         """
         skip: set[str] = set()
-        today = datetime.now(UTC).strftime("%Y-%m-%d")
 
-        # CAPTURING: any events today?
-        row = self._db.execute(
-            "SELECT COUNT(*) FROM event_store WHERE DATE(timestamp) = ?",
-            [today],
+        # Per-clock state queries
+        max_seq_row = self._db.execute(
+            "SELECT COALESCE(MAX(seq), 0) FROM event_store"
         ).fetchone()
-        if row and row[0] and int(row[0]) > 0:
-            skip.add("capturing")
+        max_seq = int(max_seq_row[0]) if max_seq_row else 0
 
-        # EXECUTING: any trades today?
-        row = self._db.execute(
-            "SELECT COUNT(*) FROM trades WHERE DATE(timestamp) = ?",
-            [today],
+        last_processed_row = self._db.execute(
+            "SELECT COALESCE(MAX(tick_number), 0) FROM execution_log"
         ).fetchone()
-        if row and row[0] and int(row[0]) > 0:
-            skip.add("executing")
+        last_processed_seq = int(last_processed_row[0]) if last_processed_row else 0
 
-        # REFLECTING: any reflection report for this domain today?
-        row = self._db.execute(
-            "SELECT COUNT(*) FROM reflection_reports "
-            "WHERE domain = ? AND DATE(created_at) = ?",
-            [domain, today],
+        # Latest reflection report creation timestamp
+        report_row = self._db.execute(
+            "SELECT MAX(created_at) FROM reflection_reports WHERE domain = ?",
+            [domain],
         ).fetchone()
-        if row and row[0] and int(row[0]) > 0:
-            skip.add("reflecting")
+        last_report_ts = report_row[0] if report_row and report_row[0] else None
 
-        logger.debug("reconstruction_result", skip=list(skip))
+        # Latest trade timestamp
+        trade_row = self._db.execute(
+            "SELECT MAX(timestamp) FROM trades"
+        ).fetchone()
+        last_trade_ts = trade_row[0] if trade_row and trade_row[0] else None
+
+        # ── Recovery detection (interrupted session) ────────────────────────
+        # If execution_log has entries but no matching report exists for the
+        # latest processed data, the previous session crashed after EXECUTING.
+        if last_processed_seq > 0:
+            if last_report_ts is None or (
+                last_trade_ts is not None and last_trade_ts > last_report_ts
+            ):
+                skip.add("capturing")
+                skip.add("executing")
+                logger.info(
+                    "reconstruction_interrupted_session",
+                    last_trade_ts=last_trade_ts,
+                    last_report_ts=last_report_ts,
+                )
+
+        logger.debug(
+            "reconstruction_result",
+            skip=list(skip),
+            max_seq=max_seq,
+            last_processed_seq=last_processed_seq,
+            last_report_ts=last_report_ts,
+            last_trade_ts=last_trade_ts,
+        )
         return skip
 
     # ── Collaborator factories ───────────────────────────────────────────────

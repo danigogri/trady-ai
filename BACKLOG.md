@@ -2,7 +2,7 @@
 
 > Generado desde BACKLOG-PROTOCOL v1
 > Auditoría inicial: 2026-07-09
-> Última actualización: 2026-07-11 (BL-019 agregado — secuencia Fase 4 → Paper Trading)
+> Última actualización: 2026-07-21 (BL-024, BL-025, BL-026 — Paper Trading v2 verify phase ruff findings)
 
 ---
 
@@ -99,6 +99,16 @@ Se detectó un bug preexistente durante el triage: `init_db` en `db/database.py`
 [BL-020] | deuda | baja | paper-trading, contracts | **`dry_run_enforced("dry_run")` no llama a `validate_execution_secrets()`.** La implementación actual usa string comparison directo en `contracts.py:37` en vez de delegar a `security/polymarket.py:16`. Son funcionalmente equivalentes porque `validate_execution_secrets()` con `execution_mode="dry_run"` es un no-op (`return` inmediato en línea 29-30). El safety net real está en `ExecutionEngine(dry_run=True)` hardcodeado en `session.py:352`. La spec (REQ-PT-002, línea 37) referencia `validate_execution_secrets()` como mecanismo de validación, creando una discrepancia documental. Sin impacto operacional — corregir solo si cambia el contrato de seguridad o si se reutiliza `dry_run_enforced()` en modo live. | abierto
 
 [BL-021] | deuda | baja | paper-trading, session | **`_compute_day()` usa `COUNT(*)` en vez de `COUNT(DISTINCT DATE())`.** La query en `session.py:380` cuenta filas totales de `reflection_reports` en vez de días distintos. `temporal_integrity()` (`contracts.py:88`) previene sesiones duplicadas por día usando `datetime.now(UTC)`, así que en operación normal ambas queries son equivalentes. Impacto cosmético: si existieran múltiples reports el mismo día (por inserción manual o scope distinto), los directorios de bundle saltarían números (`dia-007/`, `dia-009/`). No afecta evidencia, replayabilidad, calibración, ni governance. Corregir si `temporal_integrity()` se relaja en el futuro. | abierto
+
+[BL-022] | deuda | baja | paper-trading, bundler | **`_count_today_events(day)` y `_count_today_trades(day)` ignoran el parámetro `day`.** `bundler.py:142-157` cuenta todos los eventos/trades sin filtrar por día. Limitación del schema actual: `event_store` no tiene columna `session_day`. El `session.py` `_count_events()` tiene el mismo comportamiento (cuenta total), así que el bundle regenerado es consistente con el original. Impacto: solo cosmético en `session_report.json` regenerado. No afecta Reflection, Calibration, ni Governance. Revisar post-Paper Trading cuando se agregue columna `session_day` al schema. | abierto
+
+[BL-023] | deuda | media | core, persistence | **`get_events()` límite por defecto aumentado a 2000 pero sin paginación real.** `persistence.py:391` tenía `limit=100` — insuficiente para mercados activos (>100 eventos/día). Aumentado a 2000 como mejora operacional para Paper Trading. El docstring de `engine.py:153` documentaba esto como limitación de Fase 2 con plan de resolver en Fase 6+ (cursor-based streaming con batch_size configurable). Revisar post-Paper Trading si 2000 es suficiente o si se necesita paginación real. | abierto
+
+[BL-024] | deuda | media | paper-trading, contracts, session | **`last_processed_seq` usa `execution_log.tick_number` como proxy en vez de una columna dedicada.** `contracts.py:100-104` y `session.py:257-260` consultan `MAX(tick_number)` de `execution_log` para trackear el progreso del Decision Clock. `tick_number` es monotónicamente creciente y se correlaciona con eventos procesados — funcional para los 30 días de Paper Trading. Para Phase 6+, agregar columna `last_processed_seq` dedicada en la tabla `trades` o una tabla `clock_state` separada. | abierto
+
+[BL-025] | deuda | baja | tests | **Ruff N806 — `MockCapture` naming convention (10 instancias en 4 archivos).** `with patch(...) as MockCapture` usa PascalCase en vez de `mock_capture` (snake_case). Archivos: `test_paper_trading_session.py`, `test_reconstruction.py`, `test_subdaily_execution.py`. No bloquea — naming convention lint. | abierto
+
+[BL-026] | deuda | baja | tests, scripts | **Ruff import hygiene — unsorted imports (I001), unused imports (F401), unused variable (F841). 13 instancias, 12 auto-fixable.** Archivos: `ensure_active_market.py`, `test_guard.py`, `test_reconstruction.py`, `test_subdaily_execution.py`, `test_cli.py`, `test_paper_trading_session.py`. `ruff check --fix` resuelve 12/13. | abierto
 
 ---
 

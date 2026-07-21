@@ -389,13 +389,15 @@ def append_event(db: sqlite_utils.Database, event: dict[str, Any]) -> int | None
 
 
 def get_events(db: sqlite_utils.Database, since_seq: int = 0,
-               limit: int = 100) -> list[MarketInput]:
+               limit: int = 2000) -> list[MarketInput]:
     """Read events from store as MarketInput list.
 
     Args:
         db: Database instance.
         since_seq: Return events with seq > since_seq. Default 0 = all.
-        limit: Max events to return. Default 100.
+        limit: Max events to return. Default 2000. Sufficient for daily
+            paper trading sessions. Phases 6+ should implement cursor-based
+            streaming with configurable batch_size for larger datasets.
 
     Returns:
         list[MarketInput]: Ordered by seq ASC.

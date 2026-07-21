@@ -48,6 +48,9 @@ class EvidenceBundler:
         Creates the output directory, serializes the report and contract
         results, computes SHA-256 checksums, and writes a manifest.
 
+        All filenames include an ``HHMMSS`` UTC timestamp suffix to prevent
+        overwrites when multiple sessions execute within the same calendar day.
+
         Args:
             report: ``SessionReport`` from a paper trading session run.
 
@@ -57,19 +60,21 @@ class EvidenceBundler:
         day_dir = self._day_dir(report.day)
         day_dir.mkdir(parents=True, exist_ok=True)
 
+        ts = datetime.now(UTC).strftime("%H%M%S")
+
         # ── Write session report ─────────────────────────────────────────────
-        report_path = day_dir / "session_report.json"
+        report_path = day_dir / f"session_report-{ts}.json"
         report_data = _dataclass_to_dict(report)
         report_path.write_text(json.dumps(report_data, indent=2, default=str))
 
         # ── Write contract results ───────────────────────────────────────────
-        contracts_path = day_dir / "contracts.json"
+        contracts_path = day_dir / f"contracts-{ts}.json"
         contracts_data = [_dataclass_to_dict(v) for v in report.contract_results]
         contracts_path.write_text(json.dumps(contracts_data, indent=2))
 
         # ── Compute SHA-256 checksums ────────────────────────────────────────
         checksums: dict[str, str] = {}
-        for name in ["session_report.json", "contracts.json"]:
+        for name in [f"session_report-{ts}.json", f"contracts-{ts}.json"]:
             content = (day_dir / name).read_bytes()
             checksums[name] = hashlib.sha256(content).hexdigest()
 
@@ -80,7 +85,7 @@ class EvidenceBundler:
             created_at=datetime.now(UTC).isoformat(),
             artifact_checksums=checksums,
         )
-        manifest_path = day_dir / "manifest.json"
+        manifest_path = day_dir / f"manifest-{ts}.json"
         manifest_data = _dataclass_to_dict(manifest)
         manifest_path.write_text(json.dumps(manifest_data, indent=2))
 
