@@ -76,30 +76,42 @@ def no_real_funds(db: sqlite_utils.Database) -> list[ContractViolation]:
 
 
 def temporal_integrity(
-    db: sqlite_utils.Database, day: int, domain: str
+    db: sqlite_utils.Database, domain: str, last_processed_seq: int
 ) -> list[ContractViolation]:
-    """Validate no duplicate session exists for the same day and domain.
+    """Validate no overlapping event processing for the same domain.
 
     REQ-PT-002 — TEMPORAL_INTEGRITY contract.
-    Checks whether a ``reflection_reports`` entry already exists for
-    the given domain on the current calendar date.  If found, the
-    session is a duplicate and should not proceed.
+    Checks per-sequence overlap: does any existing session already process
+    events beyond ``last_processed_seq`` for the same domain? Multiple
+    sessions per calendar day are expected under the 15-minute rhythm —
+    only overlapping sequence ranges are blocked.
+
+    Args:
+        db: Database instance.
+        domain: Market domain (e.g. ``"FOOTBALL-WINNER"``).
+        last_processed_seq: The sequence number this session intends to
+            start from. If a previous session already processed events
+            beyond this point, it is an overlapping range.
+
+    Returns:
+        Empty list on pass. CRITICAL violation on overlap detection.
     """
-    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    # Query the highest tick_number processed in execution_log
     cursor = db.execute(
-        "SELECT COUNT(*) FROM reflection_reports "
-        "WHERE domain = ? AND DATE(created_at) = ?",
-        [domain, today],
+        "SELECT COALESCE(MAX(tick_number), 0) FROM execution_log",
     )
-    count = cursor.fetchone()[0] if cursor else 0
-    if count > 0:
+    row = cursor.fetchone()
+    max_processed = int(row[0]) if row and row[0] else 0
+
+    if last_processed_seq < max_processed:
         return [
             ContractViolation(
                 contract_name="TEMPORAL_INTEGRITY",
                 severity="CRITICAL",
                 detail=(
-                    f"Duplicate session for domain '{domain}' "
-                    f"on {today}"
+                    f"Overlapping event range for domain '{domain}': "
+                    f"already processed up to seq {max_processed}, "
+                    f"current session starts at {last_processed_seq}"
                 ),
                 timestamp=_now_iso(),
             )

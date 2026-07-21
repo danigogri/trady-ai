@@ -5,7 +5,7 @@ S1-S12 scenarios covered per spec.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -128,6 +128,10 @@ class TestS1FullSession:
     def test_full_session_all_states(self, mock_sleep, tmp_path):
         """All 7 states traversed with mocks, returns SessionReport."""
         db = _make_db()
+        # Insert events from a past day so reconstruction does NOT skip capture,
+        # but evidence guard still passes (events exist in DB).
+        past_date = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        _insert_events(db, count=3, ts=past_date)
         engines = _build_mock_engines(db)
 
         from trady_ai.paper_trading.session import PaperTradingSession
@@ -326,23 +330,61 @@ class TestS5ExecuteError:
 
 
 class TestS6DuplicateSession:
-    """S6: Duplicate session for same day+domain → ERROR."""
+    """S6: Overlapping event range for same domain → ERROR."""
 
-    def test_duplicate_session_detected(self):
-        """Temporal_integrity detects existing report for today → ERROR."""
+    def test_overlapping_event_range_detected(self):
+        """TEMPORAL_INTEGRITY detects overlapping seq range."""
         db = _make_db()
-        _insert_reflection_report(db, domain="PM-5M")
-
-        from trady_ai.paper_trading.session import PaperTradingSession
-
-        session = PaperTradingSession(db)
-
-        report = session.run_session("daily", "PM-5M", ["0x123"])
-
-        assert "ERROR" in report.stage_timestamps
-        assert any(
-            v.contract_name == "TEMPORAL_INTEGRITY" for v in report.contract_results
+        # Simulate already-processed events in execution_log up to tick 50
+        db["execution_log"].insert(
+            {
+                "tick_number": 50,
+                "market_id": "0x123",
+                "input_price": "100.0",
+                "input_volume": "10.0",
+                "state": "NEUTRAL",
+                "signal_id": None,
+                "decision_action": "HOLD",
+                "decision_reason": "test",
+                "trade_id": None,
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
         )
+
+        from trady_ai.paper_trading.contracts import temporal_integrity
+
+        # Session claims to start at seq 25, but execution_log already processed up to 50
+        violations = temporal_integrity(db, "FOOTBALL-WINNER", last_processed_seq=25)
+
+        assert len(violations) == 1
+        assert violations[0].contract_name == "TEMPORAL_INTEGRITY"
+        assert violations[0].severity == "CRITICAL"
+        assert "overlapping" in violations[0].detail.lower()
+
+    def test_non_overlapping_range_passes(self):
+        """TEMPORAL_INTEGRITY passes when seq ranges do not overlap."""
+        db = _make_db()
+        db["execution_log"].insert(
+            {
+                "tick_number": 50,
+                "market_id": "0x123",
+                "input_price": "100.0",
+                "input_volume": "10.0",
+                "state": "NEUTRAL",
+                "signal_id": None,
+                "decision_action": "HOLD",
+                "decision_reason": "test",
+                "trade_id": None,
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        )
+
+        from trady_ai.paper_trading.contracts import temporal_integrity
+
+        # Session claims to start at seq 100, which is beyond what was processed (50)
+        violations = temporal_integrity(db, "FOOTBALL-WINNER", last_processed_seq=100)
+
+        assert len(violations) == 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -395,6 +437,10 @@ class TestS8NonInteractive:
     def test_non_interactive_complete(self, mock_sleep, tmp_path):
         """non_interactive=True prevents prompts, returns SessionReport."""
         db = _make_db()
+        # Insert events from a past day to satisfy evidence guard without
+        # triggering reconstruction skip (which requires today's date).
+        past_date = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        _insert_events(db, count=3, ts=past_date)
         engines = _build_mock_engines(db)
 
         from trady_ai.paper_trading.session import PaperTradingSession
@@ -417,8 +463,7 @@ class TestS8NonInteractive:
             )
 
         assert "COMPLETE" in report.stage_timestamps
-        # event_count may be 0 since mock capture doesn't add events
-        assert report.event_count >= 0
+        assert report.event_count >= 3  # events pre-inserted from past date
 
 
 # ═══════════════════════════════════════════════════════════════════════════

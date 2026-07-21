@@ -31,6 +31,9 @@ Este documento traduce los principios constitucionales (A1 — Deterministic-Fir
 | deuda | Pago de deuda técnica registrada en backlog        | `deuda: tipar __init__ de modelos Pydantic (BL-001)`         |
 | docs  | Cambios exclusivos de documentación                | `docs: agregar GIT-WORKFLUX.md`                              |
 | spec  | Cambios en RFCs o SDDs                             | `spec: propuesta Polymarket Fase 2`                          |
+| wip   | Commits locales WIP durante el ciclo SDD (apply→verify) | `wip: apply <change>, unverified`                     |
+
+> **Nota**: Para semántica completa del tipo `wip:` (amend, squash, push prohibition), ver SDD-CYCLE-GOVERNANCE.md §4.
 
 ### Reglas
 
@@ -49,6 +52,7 @@ Este documento traduce los principios constitucionales (A1 — Deterministic-Fir
 main                    → línea base estable, solo merge vía PR
 fix/BL-XXX              → un fix del backlog por branch
 feat/<nombre-fase>      → una fase completa del roadmap
+sdd/<change-name>       → un cambio del ciclo SDD (proposal→archive)
 ```
 
 ### Flujo
@@ -66,6 +70,8 @@ git push -u origin fix/BL-005
 git checkout main
 git pull
 ```
+
+> **SDD**: Para cambios SDD, el PR se crea en la fase Archive (post-squash), no al pushear el branch. Ver SDD-CYCLE-GOVERNANCE.md §3.
 
 ### Reglas
 
@@ -127,6 +133,8 @@ El PR de freeze debe incluir:
 - Métricas de verificación (tests, coverage, mypy)
 - Checklist de acceptance criteria
 
+Para el contrato completo del verify-report (formato, contenido, veredicto), ver SDD-CYCLE-GOVERNANCE.md §6.
+
 ---
 
 ## 6. Seguridad
@@ -154,3 +162,4 @@ Este workflow NO aplica para:
 - PORTABLE-OS-OPERATIONS-MANUAL.md — integration doctrine
 - BACKLOG-PROTOCOL.md — registro de hallazgos
 - TRADY-AI-MASTER-ROADMAP-001.md — fases del roadmap
+- SDD-CYCLE-GOVERNANCE.md — ciclo SDD, WIP semantics, verify-report contract

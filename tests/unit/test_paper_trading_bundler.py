@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 import sqlite_utils
@@ -21,6 +22,21 @@ def _make_db() -> sqlite_utils.Database:
     return db
 
 
+def _find_file(bundle_path: Path, prefix: str) -> Path:
+    """Find a timestamped file in the bundle directory by prefix.
+
+    Files are named ``{prefix}-HHMMSS.json`` by the bundler.
+    """
+    matches = list(bundle_path.glob(f"{prefix}-*.json"))
+    assert len(matches) == 1, f"Expected 1 {prefix}-*.json, found {len(matches)}"
+    return matches[0]
+
+
+def _read_json(bundle_path: Path, prefix: str) -> dict:
+    """Find and parse a timestamped JSON file in the bundle directory."""
+    return json.loads(_find_file(bundle_path, prefix).read_text())
+
+
 class TestEvidenceBundlerBundle:
     """EvidenceBundler.bundle() — output structure and determinism."""
 
@@ -34,7 +50,7 @@ class TestEvidenceBundlerBundle:
         )
 
     def test_bundle_creates_manifest_with_checksums(self, tmp_path):
-        """manifest.json contains day, domain, created_at, artifact_checksums."""
+        """manifest-HHMMSS.json contains day, domain, created_at, artifact_checksums."""
         from trady_ai.paper_trading.bundler import EvidenceBundler
 
         db = _make_db()
@@ -43,18 +59,17 @@ class TestEvidenceBundlerBundle:
 
         bundle_path = bundler.bundle(report)
 
-        manifest_file = bundle_path / "manifest.json"
-        assert manifest_file.exists()
-        manifest = json.loads(manifest_file.read_text())
+        manifest = _read_json(bundle_path, "manifest")
         assert manifest["day"] == 1
         assert manifest["domain"] == "PM-5M"
         assert "created_at" in manifest
         assert "artifact_checksums" in manifest
-        assert "session_report.json" in manifest["artifact_checksums"]
-        assert "contracts.json" in manifest["artifact_checksums"]
+        # Checksums reference timestamped filenames
+        for key in manifest["artifact_checksums"]:
+            assert key.startswith("session_report-") or key.startswith("contracts-")
 
     def test_bundle_creates_session_report_json(self, tmp_path):
-        """session_report.json contains the full SessionReport data."""
+        """session_report-HHMMSS.json contains the full SessionReport data."""
         from trady_ai.paper_trading.bundler import EvidenceBundler
 
         db = _make_db()
@@ -63,9 +78,7 @@ class TestEvidenceBundlerBundle:
 
         bundle_path = bundler.bundle(report)
 
-        report_file = bundle_path / "session_report.json"
-        assert report_file.exists()
-        data = json.loads(report_file.read_text())
+        data = _read_json(bundle_path, "session_report")
         assert data["day"] == 1
         assert data["domain"] == "PM-5M"
         assert data["event_count"] == 10
@@ -73,7 +86,7 @@ class TestEvidenceBundlerBundle:
         assert data["reflection_report_id"] == 1
 
     def test_bundle_creates_contracts_json(self, tmp_path):
-        """contracts.json contains contract validation results."""
+        """contracts-HHMMSS.json contains contract validation results."""
         from trady_ai.paper_trading.bundler import EvidenceBundler
 
         db = _make_db()
@@ -94,9 +107,7 @@ class TestEvidenceBundlerBundle:
         bundler = EvidenceBundler(db, output_base=str(tmp_path))
         bundle_path = bundler.bundle(report)
 
-        contracts_file = bundle_path / "contracts.json"
-        assert contracts_file.exists()
-        data = json.loads(contracts_file.read_text())
+        data = _read_json(bundle_path, "contracts")
         assert len(data) == 1
         assert data[0]["contract_name"] == "DRY_RUN_ENFORCED"
 
@@ -129,8 +140,8 @@ class TestEvidenceBundlerBundle:
         path1 = bundler.bundle(report)
         path2 = bundler.bundle(report)
 
-        manifest1 = json.loads((path1 / "manifest.json").read_text())
-        manifest2 = json.loads((path2 / "manifest.json").read_text())
+        manifest1 = _read_json(path1, "manifest")
+        manifest2 = _read_json(path2, "manifest")
         assert manifest1["artifact_checksums"] == manifest2["artifact_checksums"]
 
 
@@ -177,7 +188,7 @@ class TestEvidenceBundlerRegenerate:
 
         bundle_path = bundler.regenerate_bundle(1, "PM-5M")
         assert bundle_path.exists()
-        manifest = json.loads((bundle_path / "manifest.json").read_text())
+        manifest = _read_json(bundle_path, "manifest")
         assert manifest["day"] == 1
         assert manifest["domain"] == "PM-5M"
         assert len(manifest["artifact_checksums"]) == 2
@@ -202,6 +213,6 @@ class TestEvidenceBundlerRegenerate:
 
         path1 = bundler.regenerate_bundle(1, "PM-5M")
         path2 = bundler.regenerate_bundle(1, "PM-5M")
-        m1 = json.loads((path1 / "manifest.json").read_text())
-        m2 = json.loads((path2 / "manifest.json").read_text())
+        m1 = _read_json(path1, "manifest")
+        m2 = _read_json(path2, "manifest")
         assert m1["artifact_checksums"] == m2["artifact_checksums"]

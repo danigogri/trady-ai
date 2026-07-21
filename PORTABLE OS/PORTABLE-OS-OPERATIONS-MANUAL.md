@@ -286,6 +286,183 @@ Reconciliation exists to preserve survivability, not to normalize instability.
 
 ---
 
+## 5.5 Review Methodology
+
+*Built upon: A3 (Boundary Discipline), A6 (Governance Minimalism), A8 (Evidence Before Complexity), B6 (Structured Work Cycle)*
+
+### Definition
+
+A review is the systematic application of a single universal 12-step analytical methodology. All 12 steps execute in order on every artifact under review, regardless of artifact type, size, or complexity. Every review begins here.
+
+If a step is not applicable to the artifact under review, the reviewer concludes "Not applicable" and proceeds to the next step. Subsets, shortcuts, and alternative review flows are not permitted (A3 — Boundary Discipline).
+
+This methodology is generic. It applies to any artifact: governance documents, specs, designs, code, configuration, proposals, reports, or records. It is the methodology that Review Gates (see SDD Cycle Governance) apply at each lifecycle transition.
+
+### Phase Structure
+
+The 12 steps are grouped into 4 logical phases for readability, training, and automation. These phases are presentational only — they do not create alternative entry points, and all 12 steps execute regardless of phase grouping.
+
+**Context Reconstruction** (Steps 1–2): Establish what the artifact is authorized to define and what ecosystem it belongs to. Before analyzing content, understand authority and context.
+
+**Consistency Analysis** (Steps 3–5): Search for what is wrong, what is missing, and what is duplicated. These steps overlap with audit criteria defined in §5.3 (Audit Protocol) — see cross-reference below for guidance on WHAT to validate.
+
+**Architectural Integrity** (Steps 6–8): Verify that responsibilities are coherent, dependencies are intentional, and the artifact can evolve without architectural drift.
+
+**Quality Validation** (Steps 9–12): Validate terminology, philosophical alignment, operational risk, and future technical debt. These steps look beyond correctness toward sustainability.
+
+### Step 1 — Identify Authority
+
+Every review begins with authority before content. Identify the artifact's authority level: what it is allowed to define, what it must inherit from higher-authority documents, and what it cannot override.
+
+Determine:
+- Which principles, policies, or contracts govern this artifact?
+- What does the artifact have authority to define?
+- What boundaries must it respect?
+- What is outside its scope?
+
+The artifact must not contradict its governing authority. If it does, that is a finding.
+
+### Step 2 — Reconstruct Context
+
+Review the artifact against the complete ecosystem, not against a single document. Reconstruct the architectural context: which documents, contracts, decisions, and frozen artifacts relate to this work product?
+
+Load at minimum:
+- The artifact's governing authority (identified in Step 1)
+- Related artifacts in the same domain
+- Previously frozen or archived decisions
+- Existing contracts and boundaries that intersect with the artifact
+
+A review that only inspects the artifact in isolation misses contextual contradictions.
+
+### Step 3 — Detect Contradictions
+
+Search for contradictions across all authoritative artifacts. Contradictions include conflicting ownership, overlapping responsibilities, incompatible lifecycle definitions, competing authority claims, inconsistent terminology, or broken boundary contracts.
+
+(see §5.3 — Audit Protocol for criteria on what constitutes architectural drift, ownership violation, and boundary breach)
+
+Document each contradiction as a finding with: the conflicting statements, the source locations, and the authority that resolves the conflict.
+
+### Step 4 — Detect Missing Information
+
+Ask: Who owns this? Who initializes it? Who destroys it? Who validates it? Who persists it? Who approves it? Who is responsible if it fails?
+
+Missing information is often more critical than incorrect statements. An artifact that omits ownership, lifecycle, or failure responsibility is incomplete regardless of how correct its stated content is.
+
+(see §5.3 — Audit Protocol for audit-specific validation criteria on ownership and lifecycle verification)
+
+### Step 5 — Detect Duplication
+
+Search for duplicated concepts, ownership, responsibilities, doctrine, lifecycle rules, contracts, or documentation across the artifact and the broader ecosystem.
+
+Determine whether duplication creates future drift risk: when two sources define the same rule, one will evolve and the other will be forgotten. Document drift-risk assessment for each instance.
+
+(see §5.3 — Audit Protocol for criteria on complexity inflation and dependency expansion detection)
+
+### Step 6 — Analyze Responsibility Allocation
+
+Verify that every component, module, or entity owns one coherent responsibility. Detect:
+- Mixed concerns — a component handling multiple unrelated responsibilities
+- Responsibility leakage — a component reaching beyond its boundary
+- Ownership collapse — too many responsibilities concentrated in one entity
+- Boundary violations — a component crossing into another's domain
+
+(see §5.3 — Audit Protocol for criteria on boundary preservation and ownership violation identification)
+
+### Step 7 — Analyze Dependencies
+
+Reconstruct dependency graphs for the artifact and its ecosystem. Detect:
+- Circular dependencies (A depends on B, B depends on A)
+- Reverse dependencies (a lower layer depends on a higher layer)
+- Hidden or unnecessary coupling
+- Implicit architectural relationships not documented anywhere
+- Excessive dependency depth
+
+Document each issue as a finding with the dependency chain and the risk it creates.
+
+### Step 8 — Evaluate Evolution
+
+Determine the artifact's ability to survive future change:
+- Can it be extended without breaking existing consumers?
+- Can it be replaced without rewriting dependents?
+- Can it be frozen without losing adaptability?
+- Can it survive the next roadmap phases?
+- Can it scale without architectural drift?
+
+Document limitations as findings even if they do not block current acceptance.
+
+### Step 9 — Verify Terminology
+
+Search for terminology issues:
+- Different names for the same concept
+- Same name for different concepts
+- Similar-but-distinct concepts with confusingly similar names
+- Terms used inconsistently across the artifact and ecosystem
+
+Terminology debt is future technical debt. Misnamed concepts survive in documentation and conversation long after the original meaning drifts.
+
+### Step 10 — Compare Against Foundational Principles
+
+Compare the artifact against the governing philosophy and foundational principles. Detect philosophical drift even when implementation appears technically correct. Questions to ask:
+- Does this violate a foundational principle (even if it works)?
+- Does this create a precedent that undermines the governing philosophy?
+- Is this technically correct but architecturally inconsistent?
+
+Technically correct work that drifts from foundational principles creates hidden governance debt.
+
+### Step 11 — Operational Risk Review
+
+Analyze the artifact's operational impact:
+- Maintainability — can future agents understand and modify this?
+- Testability — can correctness be verified?
+- Auditability — can decisions and changes be traced?
+- Observability — is operational state visible?
+- Failure modes — what happens when this breaks?
+- Debuggability — can failures be diagnosed?
+- Long-term maintenance burden — what is the ongoing cost?
+
+Document each risk with severity assessment.
+
+### Step 12 — Future Technical Debt Review
+
+Determine whether the artifact introduces future rigidity, unnecessary abstraction, hidden complexity, or governance expansion — even if it is technically correct today. Look for:
+- Hardcoded lists where extension is foreseeable
+- Over-engineering beyond current known requirements
+- Hidden coupling that will become visible only during future changes
+- Process or documentation that will need ongoing maintenance without proportional value
+
+Not all technical debt is avoidable. All technical debt must be deliberate and documented.
+
+### Cross-Reference: Audit Protocol (§5.3)
+
+Steps 3, 4, 5, and 6 overlap with audit criteria defined in §5.3 (Audit Protocol). These two sections serve complementary roles:
+
+- **§5.3 defines WHAT to validate**: doctrinal adherence, architectural drift, complexity inflation, ownership violations, boundary preservation, observability degradation, dependency expansion.
+- **§5.5 defines HOW to systematically reach conclusions**: the 12-step methodology that surfaces findings.
+
+When executing Steps 3–6, consult §5.3 for the specific validation criteria. Do not duplicate §5.3 content here.
+
+The methodology described in this section is applied at each lifecycle gate defined in the Review Gates section of the SDD Cycle Governance document. This section defines the methodology; Review Gates define when it runs.
+
+### Anti-Loop Safeguards
+
+Review loops must be bounded. After 3 consecutive FAILs on the same work product, the review MUST escalate per the §5.3 escalation path. The escalation record MUST document: the recipient of the escalated decision, the complete iteration history (findings from each iteration), and the specific decision requiring higher authority.
+
+If a work product eventually passes (e.g., FAIL → WARN → PASS), no escalation occurs. The iteration count is recorded for audit.
+
+The 3-FAIL counter resets when the artifact substantially changes scope or when a higher authority overrides the escalation.
+
+### Extension Mechanism
+
+New review steps may be added when there is evidence of recurring gaps not covered by the existing 12 steps. The process:
+1. Document the recurring gap with at least 3 independent instances
+2. Propose the new step as part of the universal sequence (not as a subset or alternative)
+3. Follow the Discovery Protocol (§6) for approval
+4. Integrate into the sequence preserving the existing step order
+
+Steps cannot be removed. Subsets cannot be created. Governance minimalism (A6) applies — one methodology.
+
+---
+
 # 6. DISCOVERY PROTOCOL
 
 *Built upon: B6 (Structured Work Cycle), A2 (Architecture Before Implementation), A8 (Evidence Before Complexity)*

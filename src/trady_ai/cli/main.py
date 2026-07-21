@@ -232,7 +232,8 @@ def paper_trade() -> None:
 @click.option("--domain", required=True, help="Market domain (e.g. PM-5M)")
 @click.option("--markets", multiple=True, help="Market condition IDs")
 @click.option("--non-interactive", is_flag=True, default=False, help="Timed capture without prompts")
-def session(scope: str, domain: str, markets: tuple[str, ...], non_interactive: bool) -> None:
+@click.option("--duration", default=60, type=int, help="Capture window in seconds (default: 60)")
+def session(scope: str, domain: str, markets: tuple[str, ...], non_interactive: bool, duration: int) -> None:
     """Run a paper trading session."""
     from trady_ai.config import get_settings
     from trady_ai.db.database import get_db
@@ -240,15 +241,26 @@ def session(scope: str, domain: str, markets: tuple[str, ...], non_interactive: 
     settings = get_settings()
     db = get_db(settings)
 
+    from trady_ai.adapters.polymarket import PolymarketAdapter
     from trady_ai.paper_trading.session import PaperTradingSession
 
-    market_ids = list(markets) if markets else []
-    paper_session = PaperTradingSession(db)
+    market_ids = list(markets) if markets else settings.get_active_market_ids()
+    if not market_ids:
+        click.echo("No markets specified. Use --markets or configure active_markets in settings.")
+        return
+
+    adapter = PolymarketAdapter(
+        rest_url=settings.polymarket_rest_url,
+        ws_url=settings.polymarket_ws_url,
+        api_key=settings.polymarket_api_key,
+    )
+    paper_session = PaperTradingSession(db, adapter=adapter)
     report = paper_session.run_session(
         scope=scope,
         domain=domain,
         market_ids=market_ids,
         non_interactive=non_interactive,
+        duration=duration,
     )
 
     has_error = "ERROR" in report.stage_timestamps
@@ -256,6 +268,7 @@ def session(scope: str, domain: str, markets: tuple[str, ...], non_interactive: 
     click.echo(f"Paper Trading Session — Day {report.day}, Domain: {report.domain}")
     click.echo(f"  State: {'ERROR' if has_error else 'COMPLETE'}")
     click.echo(f"  Events: {report.event_count}, Trades: {report.trade_count}")
+    click.echo(f"  Market IDs: {', '.join(report.market_ids) if report.market_ids else '(none)'}")
     click.echo(f"  Reflection report: #{report.reflection_report_id or 'N/A'}")
     click.echo(f"  Calibration: {report.calibration_state}")
 

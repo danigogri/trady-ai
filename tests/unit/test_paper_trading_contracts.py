@@ -150,45 +150,88 @@ class TestNoRealFunds:
 
 
 class TestTemporalIntegrity:
-    """Contract: no duplicate session for same day+domain."""
+    """Contract: no overlapping event range for same domain."""
 
-    def test_no_reports_passes(self):
+    def test_no_processed_events_passes(self):
         from trady_ai.paper_trading.contracts import temporal_integrity
 
         db = _make_db()
-        result = temporal_integrity(db, 1, "PM-5M")
+        # No execution_log entries → no overlap
+        result = temporal_integrity(db, "PM-5M", last_processed_seq=0)
         assert result == []
 
-    def test_report_for_today_fails_critical(self):
+    def test_overlapping_seq_fails_critical(self):
         from trady_ai.paper_trading.contracts import temporal_integrity
         from trady_ai.paper_trading.models import ContractViolation
 
         db = _make_db()
-        _insert_reflection_report(db, domain="PM-5M")
-        result = temporal_integrity(db, 1, "PM-5M")
+        # Simulate already-processed events up to tick 50
+        db["execution_log"].insert(
+            {
+                "tick_number": 50,
+                "market_id": "0x123",
+                "input_price": "100.0",
+                "input_volume": "10.0",
+                "state": "NEUTRAL",
+                "signal_id": None,
+                "decision_action": "HOLD",
+                "decision_reason": "test",
+                "trade_id": None,
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        )
+        # Session claims to start at seq 25, but 50 already processed → overlap
+        result = temporal_integrity(db, "PM-5M", last_processed_seq=25)
         assert len(result) == 1
         assert isinstance(result[0], ContractViolation)
         assert result[0].severity == "CRITICAL"
         assert result[0].contract_name == "TEMPORAL_INTEGRITY"
+        assert "overlapping" in result[0].detail.lower()
 
-    def test_different_domain_not_affected(self):
+    def test_non_overlapping_seq_passes(self):
         from trady_ai.paper_trading.contracts import temporal_integrity
 
         db = _make_db()
-        _insert_reflection_report(db, domain="OTHER-DOMAIN")
-        result = temporal_integrity(db, 1, "PM-5M")
+        db["execution_log"].insert(
+            {
+                "tick_number": 50,
+                "market_id": "0x123",
+                "input_price": "100.0",
+                "input_volume": "10.0",
+                "state": "NEUTRAL",
+                "signal_id": None,
+                "decision_action": "HOLD",
+                "decision_reason": "test",
+                "trade_id": None,
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        )
+        # Session starts at seq 100 → beyond what was processed (50) → no overlap
+        result = temporal_integrity(db, "PM-5M", last_processed_seq=100)
         assert result == []
 
-    def test_different_date_not_affected(self):
+    def test_multiple_sessions_same_day_passes(self):
+        """Multiple sessions per calendar day are expected — no overlap check by date."""
         from trady_ai.paper_trading.contracts import temporal_integrity
 
         db = _make_db()
-        # Insert a report with yesterday's date
-        from datetime import timedelta
-
-        yesterday = (datetime.now(UTC) - timedelta(days=1)).isoformat()
-        _insert_reflection_report(db, domain="PM-5M", created_at=yesterday)
-        result = temporal_integrity(db, 1, "PM-5M")
+        # Simulate first session processed up to tick 100
+        db["execution_log"].insert(
+            {
+                "tick_number": 100,
+                "market_id": "0x123",
+                "input_price": "100.0",
+                "input_volume": "10.0",
+                "state": "NEUTRAL",
+                "signal_id": None,
+                "decision_action": "HOLD",
+                "decision_reason": "test",
+                "trade_id": None,
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        )
+        # Second session same day → starts at seq 101 (beyond what was processed)
+        result = temporal_integrity(db, "PM-5M", last_processed_seq=101)
         assert result == []
 
 
