@@ -32,6 +32,8 @@ _SCOPE_DELTAS: dict[str, timedelta] = {
 
 # Default minimum sessions for calibration evidence gate
 _DEFAULT_MIN_SESSIONS = 30
+# Default review threshold in days
+_DEFAULT_REVIEW_THRESHOLD_DAYS = 30
 
 
 class ReflectionEngine:
@@ -54,12 +56,14 @@ class ReflectionEngine:
         signal_quality_analyzer: Any,
         drift_analyzer: Any,
         proposal_generator: ProposalGenerator,
+        calibration_analyzer: Any = None,
     ) -> None:
         self._db = db
         self._outcome_analyzer = outcome_analyzer
         self._signal_quality_analyzer = signal_quality_analyzer
         self._drift_analyzer = drift_analyzer
         self._proposal_generator = proposal_generator
+        self._calibration_analyzer = calibration_analyzer
 
     def reflect(
         self,
@@ -123,6 +127,28 @@ class ReflectionEngine:
                 )
                 all_proposals.extend(proposals)
 
+        # ── 5.5 Calibration analysis (optional) ──────────────────────────
+        evidence_report_dict: dict[str, Any] | None = None
+        if self._calibration_analyzer is not None:
+            try:
+                for sid in strategy_ids:
+                    er = self._calibration_analyzer.analyze(
+                        self._db, domain, strategy_name=sid
+                    )
+                    evidence_report_dict = {
+                        "strategy_name": sid,
+                        "aic": er.aic,
+                        "bic": er.bic,
+                        "markov_test": er.markov_test,
+                        "state_persistence": er.state_persistence,
+                        "conditional_entropy": er.conditional_entropy,
+                        "num_states": er.num_states,
+                        "num_observations": er.num_observations,
+                        "computed_at": er.computed_at,
+                    }
+            except Exception:
+                evidence_report_dict = {"error": "calibration analysis failed"}
+
         # ── 6. Assemble report ───────────────────────────────────────────
         report = ReflectionReport(
             scope=scope,
@@ -135,6 +161,7 @@ class ReflectionEngine:
             drift_events=all_drift_events,
             proposals=all_proposals,
             calibration_state=self._check_calibration_readiness(domain),
+            evidence_report=evidence_report_dict,
             created_at=datetime.now(UTC),
         )
 
@@ -181,7 +208,15 @@ class ReflectionEngine:
             int(min_sessions_str) if min_sessions_str else _DEFAULT_MIN_SESSIONS
         )
 
-        # Time gate: at least 30 distinct calendar days with reports
+        # Read review_threshold_days config (default 30), per governance R5
+        review_days_str = get_reflection_config(
+            self._db, domain, "review_threshold_days"
+        )
+        review_threshold_days = (
+            int(review_days_str) if review_days_str else _DEFAULT_REVIEW_THRESHOLD_DAYS
+        )
+
+        # Time gate: at least review_threshold_days distinct calendar days
         time_row = self._db.execute(
             "SELECT COUNT(DISTINCT DATE(period_start)) FROM reflection_reports "
             "WHERE domain = ?",
@@ -196,7 +231,7 @@ class ReflectionEngine:
         ).fetchone()
         evidence_gate = evidence_row[0] if evidence_row else 0
 
-        if time_gate >= 30 and evidence_gate >= min_sessions:
+        if time_gate >= review_threshold_days and evidence_gate >= min_sessions:
             # Auto-transition to ready_for_calibration
             set_reflection_config(
                 self._db, domain, "calibration_state", "ready_for_calibration"

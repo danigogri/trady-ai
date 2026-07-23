@@ -1,9 +1,13 @@
-"""Markov Persistence Engine — 3×3 transition matrix strategy with variants.
+"""Markov Persistence Engine — N×N transition matrix strategy with variants.
 
 Provides:
     - MarkovPersistenceEngine: direction-prediction via Markov chain argmax
     - DirectionalPersistence: alias for semantic clarity (same state space)
     - VolatilityPersistence: volatility-regime classification (HIGH/LOW/STABLE)
+
+The engine delegates state classification to an injected ``StateGenerator``,
+operating exclusively on integer state indices. Without an explicit generator,
+defaults to ``DirectionalStateGenerator(3)`` for backward compatibility.
 """
 
 import json
@@ -13,16 +17,21 @@ from typing import Any
 import numpy as np
 import sqlite_utils
 
-from trady_ai.core.models import MarketState, Signal
+from trady_ai.core.models import MarketInput, MarketState, Signal
 from trady_ai.strategies.base import StrategyBase
+from trady_ai.strategies.markov.state_generator import (
+    DirectionalStateGenerator,
+    StateGenerator,
+)
 
-# ── Directional state space (shared by MarkovPersistenceEngine and DirectionalPersistence) ──
+# ── Module-level registry state (preserved for backward compat imports) ──
+# These constants are no longer used internally. They remain exported so that
+# external code referencing them does not break. New code should use
+# StateGenerator instances instead.
 
 STATE_INDEX: dict[str, int] = {"UP": 0, "DOWN": 1, "NEUTRAL": 2}
 INDEX_STATE: dict[int, str] = {0: "UP", 1: "DOWN", 2: "NEUTRAL"}
 DIRECTION_MAP: dict[str, str] = {"UP": "LONG", "DOWN": "SHORT", "NEUTRAL": "NEUTRAL"}
-
-# ── Volatility state space (used by VolatilityPersistence) ──
 
 VOLATILITY_INDEX: dict[str, int] = {"HIGH": 0, "LOW": 1, "STABLE": 2}
 VOLATILITY_INDEX_STATE: dict[int, str] = {0: "HIGH", 1: "LOW", 2: "STABLE"}
@@ -30,21 +39,31 @@ VOLATILITY_DIR_MAP: dict[str, str] = {"HIGH": "SHORT", "LOW": "LONG", "STABLE": 
 
 
 class MarkovPersistenceEngine(StrategyBase):
-    """3×3 Markov transition matrix strategy for direction prediction.
+    """N×N Markov transition matrix strategy for state prediction.
 
-    Tracks state transitions via numpy int64 counters. On evaluate(), computes
-    conditional probabilities from the current state row and picks the most likely
-    next state via np.argmax (deterministic on ties — returns first index).
-    Cold-starts with NEUTRAL signals until warmup_ticks observations are reached.
+    Delegates state classification to an injected ``StateGenerator``.
+    The engine operates on integer state indices only — no semantic labels.
+
+    Defaults to ``DirectionalStateGenerator(3)`` for backward compatibility
+    with the original 3-state implementation.
     """
 
-    def __init__(self, warmup_ticks: int = 50, threshold_pct: float = 0.001) -> None:
-        self._transition_counts: np.ndarray = np.zeros((3, 3), dtype=np.int64)
-        self._state_counts: np.ndarray = np.zeros(3, dtype=np.int64)
+    def __init__(
+        self,
+        warmup_ticks: int = 50,
+        threshold_pct: float = 0.001,
+        state_generator: StateGenerator | None = None,
+    ) -> None:
+        self._generator = state_generator or DirectionalStateGenerator(
+            threshold_pct=threshold_pct
+        )
+        s = self._generator.state_count
+        self._transition_counts: np.ndarray = np.zeros((s, s), dtype=np.int64)
+        self._state_counts: np.ndarray = np.zeros(s, dtype=np.int64)
         self._total_obs: int = 0
         self._warmup_ticks: int = warmup_ticks
         self._threshold_pct: float = threshold_pct
-        self._last_state: str | None = None
+        self._last_state_idx: int | None = None
 
     # ── properties ────────────────────────────────────────────────────
 
@@ -67,24 +86,34 @@ class MarkovPersistenceEngine(StrategyBase):
 
     # ── lifecycle hooks ─────────────────────────────────────────────
 
+    @staticmethod
+    def _market_input_from_state(state: MarketState) -> MarketInput:
+        """Build a MarketInput from a MarketState for generator classification."""
+        return MarketInput(
+            timestamp=state.timestamp,
+            market_id=state.market_id,
+            price=state.price,
+            volume=state.volume,
+            source=state.source,
+        )
+
     def on_update(self, state: MarketState) -> None:
-        """Classify the market state and increment transition counters."""
+        """Classify the market state via generator and increment transition counters."""
         self._total_obs += 1
-        current_idx = STATE_INDEX[state.state]
+        current_idx = self._generator.classify_from_label(state.state)
         self._state_counts[current_idx] += 1
 
-        if self._last_state is not None:
-            prev_idx = STATE_INDEX[self._last_state]
-            self._transition_counts[prev_idx][current_idx] += 1
+        if self._last_state_idx is not None:
+            self._transition_counts[self._last_state_idx][current_idx] += 1
 
-        self._last_state = state.state
+        self._last_state_idx = current_idx
 
     def on_evaluate(self, state: MarketState) -> Signal:
         """Compute transition probabilities and return the best signal.
 
         Returns NEUTRAL/0.0 when the current state row has zero transitions.
         """
-        current_idx = STATE_INDEX[state.state]
+        current_idx = self._generator.classify_from_label(state.state)
         row = self._transition_counts[current_idx]
 
         if row.sum() == 0:
@@ -99,8 +128,8 @@ class MarkovPersistenceEngine(StrategyBase):
 
         probs = row / row.sum()
         best_idx = int(np.argmax(probs))
-        best_state = INDEX_STATE[best_idx]
-        direction = DIRECTION_MAP[best_state]
+        best_label = self._generator.state_labels[best_idx]
+        direction = self._generator.signal_for_state(best_idx)
         confidence = float(probs[best_idx])
 
         return Signal(
@@ -109,7 +138,10 @@ class MarkovPersistenceEngine(StrategyBase):
             direction=direction,
             confidence=confidence,
             strategy_name=self.name,
-            metadata={"probabilities": probs.tolist()},
+            metadata={
+                "probabilities": probs.tolist(),
+                "state_label": best_label,
+            },
         )
 
     def on_snapshot(self) -> dict[str, Any]:
@@ -118,7 +150,7 @@ class MarkovPersistenceEngine(StrategyBase):
             "transition_counts": self._transition_counts.tolist(),
             "state_counts": self._state_counts.tolist(),
             "total_obs": self._total_obs,
-            "last_state": self._last_state,
+            "last_state_idx": self._last_state_idx,
             "warmup_ticks": self._warmup_ticks,
             "threshold_pct": self._threshold_pct,
         }
@@ -147,6 +179,8 @@ class MarkovPersistenceEngine(StrategyBase):
             state_counts=snap["state_counts"],
             warmup_ticks=snap["warmup_ticks"],
             threshold_pct=str(snap["threshold_pct"]),
+            state_space_size=self._generator.state_count,
+            state_generator=self._generator.generator_name,
         )
 
     @classmethod
@@ -189,7 +223,7 @@ class MarkovPersistenceEngine(StrategyBase):
         engine._transition_counts = np.array(trans, dtype=np.int64)
         engine._state_counts = np.array(state_c, dtype=np.int64)
         engine._total_obs = int(np.sum(engine._state_counts))
-        engine._last_state = None  # Not stored in snapshot schema
+        engine._last_state_idx = None  # Not stored in snapshot schema
         return engine
 
 
@@ -209,10 +243,8 @@ class DirectionalPersistence(MarkovPersistenceEngine):
 class VolatilityPersistence(MarkovPersistenceEngine):
     """Volatility persistence — classifies HIGH/LOW/STABLE volatility regime.
 
-    Instead of using MarketState.state for classification, maintains an
-    internal price history and computes volatility from the price range.
-    The output provides a confidence adjustment factor with metadata
-    describing the current volatility state.
+    Uses an injected ``VolatilityStateGenerator`` to classify the volatility
+    regime from a sliding price window.
     """
 
     def __init__(
@@ -220,8 +252,22 @@ class VolatilityPersistence(MarkovPersistenceEngine):
         warmup_ticks: int = 50,
         threshold_pct: float = 0.001,
         volatility_window: int = 20,
+        state_generator: StateGenerator | None = None,
     ) -> None:
-        super().__init__(warmup_ticks, threshold_pct)
+        if state_generator is None:
+            from trady_ai.strategies.markov.state_generator import (
+                VolatilityStateGenerator,
+            )
+
+            state_generator = VolatilityStateGenerator(
+                threshold_pct=threshold_pct,
+                volatility_window=volatility_window,
+            )
+        super().__init__(
+            warmup_ticks=warmup_ticks,
+            threshold_pct=threshold_pct,
+            state_generator=state_generator,
+        )
         self._volatility_window: int = volatility_window
         self._price_history: list[Decimal] = []
 
@@ -229,10 +275,10 @@ class VolatilityPersistence(MarkovPersistenceEngine):
     def name(self) -> str:
         return "volatility_persistence"
 
-    # ── volatility classification ───────────────────────────────────
+    # ── backward-compat volatility classification ──────────────────
 
     def _classify_volatility(self) -> str:
-        """Classify current volatility regime from price history.
+        """Classify current volatility regime from price history (preserved for backward compat).
 
         Returns:
             One of ``"HIGH"``, ``"LOW"``, or ``"STABLE"``.
@@ -265,27 +311,27 @@ class VolatilityPersistence(MarkovPersistenceEngine):
     # ── overridden lifecycle hooks ──────────────────────────────────
 
     def on_update(self, state: MarketState) -> None:
-        """Append price to history and update transition counts from volatility state."""
+        """Track price and update transition counts from volatility state."""
         self._price_history.append(state.price)
         if len(self._price_history) > self._volatility_window:
             self._price_history.pop(0)
 
         vol_state = self._classify_volatility()
-
         self._total_obs += 1
-        current_idx = VOLATILITY_INDEX[vol_state]
+        current_idx = self._generator.classify_from_label(vol_state)
         self._state_counts[current_idx] += 1
 
-        if self._last_state is not None:
-            prev_idx = VOLATILITY_INDEX[self._last_state]
-            self._transition_counts[prev_idx][current_idx] += 1
+        if self._last_state_idx is not None:
+            self._transition_counts[self._last_state_idx][current_idx] += 1
 
-        self._last_state = vol_state
+        self._last_state_idx = current_idx
 
     def on_evaluate(self, state: MarketState) -> Signal:
         """Generate a signal based on volatility transition probabilities."""
+        if not self._price_history:
+            raise TypeError("No price data available for volatility classification")
         vol_state = self._classify_volatility()
-        current_idx = VOLATILITY_INDEX[vol_state]
+        current_idx = self._generator.classify_from_label(vol_state)
         row = self._transition_counts[current_idx]
 
         if row.sum() == 0:
@@ -300,8 +346,7 @@ class VolatilityPersistence(MarkovPersistenceEngine):
 
         probs = row / row.sum()
         best_idx = int(np.argmax(probs))
-        best_state = VOLATILITY_INDEX_STATE[best_idx]
-        direction = VOLATILITY_DIR_MAP[best_state]
+        direction = self._generator.signal_for_state(best_idx)
         confidence = float(probs[best_idx])
 
         return Signal(

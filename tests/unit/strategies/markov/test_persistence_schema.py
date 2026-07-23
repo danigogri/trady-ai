@@ -27,7 +27,7 @@ class TestInitStrategyTables:
         init_strategy_tables(tmp_strategy_db)  # Second call — no error
 
     def test_has_correct_columns(self, tmp_strategy_db):
-        """Table has the required 9 columns."""
+        """Table has the required 11 columns (9 original + 2 calibration)."""
         cols = {c.name for c in tmp_strategy_db["strategy_snapshots"].columns}
         expected = {
             "id",
@@ -39,6 +39,8 @@ class TestInitStrategyTables:
             "warmup_ticks",
             "threshold_pct",
             "snapshot_at",
+            "state_space_size",
+            "state_generator",
         }
         missing = expected - cols
         assert not missing, f"Missing columns: {missing}"

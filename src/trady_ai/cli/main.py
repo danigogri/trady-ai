@@ -218,6 +218,191 @@ def capture(markets: str, reset: bool) -> None:
         click.echo("Capture stopped.")
 
 
+# ── Calibration Commands ──────────────────────────────────────────────────────
+
+
+@cli.group()
+def calibrate() -> None:
+    """Calibration: review evidence and adopt state spaces."""
+    pass
+
+
+@calibrate.command()
+@click.option("--domain", required=True, help="Market domain (e.g. PM-5M)")
+@click.option("--strategy", "strategy_name", default="markov_persistence",
+              help="Strategy name (default: markov_persistence)")
+def review(domain: str, strategy_name: str) -> None:
+    """Review calibration evidence for a domain/strategy.
+
+    Displays AIC, BIC, Markov χ², state persistence, and conditional entropy.
+    """
+    from trady_ai.config import get_settings
+    from trady_ai.core.persistence import init_core_tables
+    from trady_ai.db.database import get_db
+
+    settings = get_settings()
+    db = get_db(settings)
+    init_core_tables(db)
+
+    from trady_ai.reflection.calibration.analyzer import CalibrationAnalyzer
+
+    analyzer = CalibrationAnalyzer()
+    report = analyzer.analyze(db, domain, strategy_name=strategy_name)
+
+    click.echo("Calibration Evidence Report")
+    click.echo(f"  Domain: {domain}")
+    click.echo(f"  Strategy: {strategy_name}")
+    click.echo(f"  States (|S|): {report.num_states}")
+    click.echo(f"  Observations: {report.num_observations}")
+
+    if report.num_states == 0:
+        click.echo("  (no data available)")
+        raise SystemExit(0)
+
+    click.echo("")
+    click.echo("  ── Information Criteria ──")
+    click.echo(f"  AIC: {report.aic:.4f}")
+    click.echo(f"  BIC: {report.bic:.4f}")
+
+    click.echo("")
+    click.echo("  ── Markov χ² Test (first-order) ──")
+    mt = report.markov_test
+    click.echo(f"  χ² statistic: {mt.get('statistic', 'N/A')}")
+    click.echo(f"  p-value: {mt.get('p_value', 'N/A')}")
+    click.echo(f"  df: {mt.get('df', 'N/A')}")
+    click.echo(f"  Reject H0 (not first-order): {mt.get('reject_null', 'N/A')}")
+
+    click.echo("")
+    click.echo("  ── State Persistence (mean residence time) ──")
+    for state_idx, mean_time in report.state_persistence.items():
+        click.echo(f"  State {state_idx}: {mean_time} ticks")
+
+    click.echo("")
+    click.echo("  ── Entropy ──")
+    click.echo(f"  Conditional entropy H(X_n+1|X_n): {report.conditional_entropy:.6f} bits")
+    click.echo("")
+    click.echo(f"  Computed: {report.computed_at}")
+
+    raise SystemExit(0)
+
+
+@calibrate.command()
+@click.option("--domain", required=True, help="Market domain (e.g. PM-5M)")
+@click.option("--states", type=int, required=True, help="Number of states (|S|)")
+@click.option("--generator", required=True, help="State generator name")
+@click.option("--strategy", "strategy_name", default="markov_persistence",
+              help="Strategy name (default: markov_persistence)")
+@click.option("--confirm", is_flag=True, help="Confirm adoption (required to persist)")
+@click.option("--reason", default="", help="Human-supplied reason for adoption")
+def adopt(
+    domain: str,
+    states: int,
+    generator: str,
+    strategy_name: str,
+    confirm: bool,
+    reason: str,
+) -> None:
+    """Adopt a new state space configuration.
+
+    Validates |S| >= 2 and generator exists. Requires --confirm to persist.
+    Without --confirm, displays summary and exits with code 1.
+    """
+    from trady_ai.config import get_settings
+    from trady_ai.core.persistence import init_core_tables
+    from trady_ai.db.database import get_db
+
+    settings = get_settings()
+    db = get_db(settings)
+    init_core_tables(db)
+
+    # Validate states >= 2
+    if states < 2:
+        click.echo(f"Error: Number of states must be >= 2, got {states}", err=True)
+        raise SystemExit(1)
+
+    # Validate generator exists
+    from trady_ai.strategies.markov import get_generator
+
+    try:
+        get_generator(generator, state_space_size=states)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+    # Generate evidence report
+    from trady_ai.reflection.calibration.analyzer import CalibrationAnalyzer
+    from trady_ai.reflection.calibration.persistence import (
+        init_calibration_tables,
+        save_adoption,
+    )
+
+    analyzer = CalibrationAnalyzer()
+    evidence = analyzer.analyze(db, domain, strategy_name=strategy_name)
+
+    # Display summary
+    click.echo("Adoption Summary")
+    click.echo(f"  Domain: {domain}")
+    click.echo(f"  Strategy: {strategy_name}")
+    click.echo(f"  States: {states}")
+    click.echo(f"  Generator: {generator}")
+    click.echo(f"  Current AIC: {evidence.aic:.4f}")
+    click.echo(f"  Current BIC: {evidence.bic:.4f}")
+    click.echo("")
+
+    if not confirm:
+        click.echo("Use --confirm to persist this adoption. Exiting without changes.", err=True)
+        raise SystemExit(1)
+
+    # Persist adoption with provenance
+    import os
+    import socket
+
+    operator = os.environ.get("USER", "unknown")
+    hostname = socket.gethostname()
+    operator_str = f"{operator}@{hostname}"
+
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC).isoformat()
+    evidence_ref = f"aic={evidence.aic:.2f},bic={evidence.bic:.2f}"
+
+    from trady_ai.reflection.calibration.models import AdoptedStateSpace
+
+    adoption = AdoptedStateSpace(
+        domain=domain,
+        strategy_name=strategy_name,
+        states=states,
+        generator=generator,
+        evidence_report_ref=evidence_ref,
+        operator=operator_str,
+        adopted_at=now,
+        reason=reason,
+    )
+    init_calibration_tables(db)
+    adoption_id = save_adoption(db, adoption)
+
+    # Write bundle
+    from trady_ai.paper_trading.bundler import EvidenceBundler
+
+    bundler = EvidenceBundler(db)
+    bundle_path = bundler.calibration_bundle(evidence, adoption)
+
+    click.echo(f"Adoption recorded (ID: {adoption_id})")
+    click.echo(f"Bundle: {bundle_path}")
+    click.echo(f"  Evidence ref: {evidence_ref}")
+    click.echo(f"  Operator: {operator_str}")
+
+    # Store in reflection_config
+    from trady_ai.reflection.persistence import set_reflection_config
+
+    set_reflection_config(db, domain, "calibration_state", "calibrated")
+    set_reflection_config(db, domain, f"adopted_states_{strategy_name}", str(states))
+    set_reflection_config(db, domain, f"adopted_generator_{strategy_name}", generator)
+
+    db.conn.commit()
+    raise SystemExit(0)
+
+
 # ── Paper Trading Commands ─────────────────────────────────────────────────────
 
 

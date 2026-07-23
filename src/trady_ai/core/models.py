@@ -25,8 +25,8 @@ class MarketState(BaseModel):
     timestamp: datetime
     price: Decimal = Field(gt=Decimal("0"))
     volume: Decimal = Field(ge=Decimal("0"))
-    state: Literal["UP", "DOWN", "NEUTRAL"]
-    previous_state: Literal["UP", "DOWN", "NEUTRAL"] | None = None
+    state: str
+    previous_state: str | None = None
     source: str = "state_tracker"
 
 

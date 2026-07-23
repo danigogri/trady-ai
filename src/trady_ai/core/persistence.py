@@ -18,8 +18,8 @@ def init_core_tables(db: sqlite_utils.Database) -> None:
             timestamp TEXT NOT NULL,
             price TEXT NOT NULL,
             volume TEXT NOT NULL,
-            state TEXT NOT NULL CHECK(state IN ('UP', 'DOWN', 'NEUTRAL')),
-            previous_state TEXT CHECK(previous_state IN ('UP', 'DOWN', 'NEUTRAL', NULL)),
+            state TEXT NOT NULL CHECK(LENGTH(state) <= 64),
+            previous_state TEXT CHECK(LENGTH(previous_state) <= 64),
             source TEXT DEFAULT 'state_tracker'
         )
         """
@@ -279,6 +279,8 @@ def init_strategy_tables(db: sqlite_utils.Database) -> None:
             state_counts TEXT NOT NULL,
             warmup_ticks INTEGER NOT NULL,
             threshold_pct TEXT NOT NULL,
+            state_space_size INTEGER NOT NULL DEFAULT 3,
+            state_generator TEXT NOT NULL DEFAULT 'directional',
             snapshot_at TEXT NOT NULL,
             UNIQUE(strategy_name, domain, tick_number)
         )
@@ -295,6 +297,8 @@ def persist_strategy_snapshot(
     state_counts: list[int],
     warmup_ticks: int,
     threshold_pct: str | float,
+    state_space_size: int = 3,
+    state_generator: str = "directional",
 ) -> None:
     """Insert or replace a strategy snapshot row.
 
@@ -311,6 +315,8 @@ def persist_strategy_snapshot(
         state_counts: Length-3 list of state visit counts.
         warmup_ticks: Warmup period used by the engine.
         threshold_pct: Threshold as string or float.
+        state_space_size: Number of states (default 3).
+        state_generator: Generator name (default ``"directional"``).
     """
     db["strategy_snapshots"].insert(  # type: ignore[union-attr]
         {
@@ -321,6 +327,8 @@ def persist_strategy_snapshot(
             "state_counts": json.dumps(state_counts),
             "warmup_ticks": warmup_ticks,
             "threshold_pct": str(threshold_pct),
+            "state_space_size": state_space_size,
+            "state_generator": state_generator,
             "snapshot_at": datetime.now(UTC).isoformat(),
         },
         pk="id",
@@ -545,5 +553,26 @@ def init_reflection_tables(db: sqlite_utils.Database) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_reflection_config_domain
         ON reflection_config(domain)
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS calibration_adoptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            domain TEXT NOT NULL,
+            strategy_name TEXT NOT NULL,
+            states INTEGER NOT NULL,
+            generator TEXT NOT NULL,
+            evidence_report_ref TEXT NOT NULL DEFAULT '',
+            operator TEXT NOT NULL DEFAULT '',
+            adopted_at TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_calibration_adoptions_domain
+        ON calibration_adoptions(domain, strategy_name)
         """
     )

@@ -1,36 +1,76 @@
 # Markov Persistence Engine Specification
 
-**Domain**: markov-persistence-engine | **Type**: New | **RFC**: RFC-003 §Initial Strategy Focus, §Statistical Traceability
+**Domain**: markov-persistence-engine | **Type**: New (with Calibration Framework modifications) | **RFC**: RFC-003 §Initial Strategy Focus, §Statistical Traceability, RFC-004
 **Package**: `src/trady_ai/strategies/markov/`
 
 ## Purpose
 
-SQLite-persisted 3×3 Markov transition matrix strategy. Computes state-transition probabilities, generates deterministic signals via `argmax`, persists snapshots for audit. Migrates `core/markov_strategy.py` → `strategies/markov/persistence.py`.
+SQLite-persisted N×N Markov transition matrix strategy. Computes state-transition probabilities, generates deterministic signals via `argmax`, persists snapshots for audit. Supports N-state matrices via pluggable `StateGenerator` ABC.
 
 ---
 
 ## Requirements
 
-### R1: V1 Markov Variants
+### Requirement: N-State Matrix Construction
 
-Two V1 variants (RFC-003 §Initial Strategy Focus):
+The engine SHALL accept `state_space_size: int` at construction, defaulting to 3. The
+transition matrix SHALL be `|S| × |S|` numpy int64. `_state_counts` SHALL be length `|S|`.
 
-| Variant | State Space | Matrix | Output |
-|---------|-------------|--------|--------|
-| DirectionalPersistence | UP/DOWN/NEUTRAL | 3×3 int64 counts | direction ∈ {LONG, SHORT, NEUTRAL} |
-| VolatilityPersistence | HIGH/LOW/STABLE | 3×3 int64 counts | confidence adjustment factor |
+| Parameter | Default | Constraint |
+|-----------|---------|------------|
+| `state_space_size` | 3 | ≥ 2, ≤ 100 |
+| `state_generator` | `DirectionalStateGenerator(3)` | MUST implement `StateGenerator` ABC |
 
-Both: `numpy.int64` counters, `np.argmax` (first-index tie-break), `warmup_ticks`/`is_ready()` preserved. Variants are INDEPENDENT — no cross-variant coupling. Continuation probabilities and state-transition probabilities are DERIVED METRICS from the matrix, not separate classes.
+#### Scenario: 5-state engine operates correctly
 
-**Scenario: DirectionalPersistence matches Fase 2**
+- GIVEN `MarkovPersistenceEngine(state_space_size=5)`
+- WHEN 100 ticks processed with a 5-state generator
+- THEN transition_counts.shape == (5, 5) AND state_counts.shape == (5,)
+- AND `evaluate()` returns valid Signal with probabilities length 5
+
+#### Scenario: Invalid |S| rejects early
+
+- GIVEN `state_space_size=1`
+- WHEN engine constructed
+- THEN raises `ValueError("state_space_size must be ≥ 2")`
+
+### Requirement: Abstract State Indices
+
+The engine SHALL operate exclusively on integer state indices. It SHALL NOT reference
+semantic labels ("UP", "DOWN", etc.) in transition logic. Label mapping belongs to
+`StateGenerator.state_labels` only.
+
+#### Scenario: Engine evaluates using indices only
+
+- GIVEN engine with |S|=4, current state index 2
+- WHEN `evaluate()` called
+- THEN it reads row 2 of transition matrix, computes probs via argmax on indices, returns Signal with direction from generator labels
+
+### Requirement: R1 — V1 Markov Variants (MODIFIED)
+
+DirectionalPersistence and VolatilityPersistence SHALL delegate state classification to
+their configured `StateGenerator` implementation instead of hardcoding `STATE_INDEX` and
+`VOLATILITY_INDEX` dicts. The internal mapping dicts move into `DirectionalStateGenerator`
+and `VolatilityStateGenerator` respectively.
+
+(Previously: hardcoded module-level `STATE_INDEX`, `VOLATILITY_INDEX`, `DIRECTION_MAP`, `VOLATILITY_DIR_MAP` dicts)
+
+| Variant | Default Generator | \|S\| |
+|---------|------------------|-----|
+| DirectionalPersistence | `DirectionalStateGenerator` | 3 |
+| VolatilityPersistence | `VolatilityStateGenerator` | 3 |
+
+#### Scenario: DirectionalPersistence matches Fase 2 (preserved)
+
 - GIVEN same 100 MarketState inputs
 - WHEN DirectionalPersistence and legacy MarkovStrategy both process them
-- THEN identical Signal outputs (field-by-field)
+- THEN identical Signal outputs (field-by-field) — zero assertion changes
 
-**Scenario: VolatilityPersistence classifies states**
+#### Scenario: VolatilityPersistence classifies states (preserved)
+
 - GIVEN MarketState with increasing price range
-- WHEN `update(state)` called
-- THEN internal volatility state transitions to HIGH if range exceeds threshold
+- WHEN `update(state)` called via generator
+- THEN volatility state transitions to HIGH if range exceeds threshold
 
 ---
 

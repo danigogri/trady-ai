@@ -29,6 +29,90 @@ _VALID_SIDES = frozenset({"BUY", "SELL"})
 _SENTINEL: Any = object()
 
 
+# ── WebSocket helpers (pure functions, no I/O) ────────────────────────────
+
+
+def _epoch_ms_to_iso(epoch_ms: str | int | None) -> str:
+    """Convert epoch milliseconds (Polymarket WS format) to ISO 8601 datetime.
+
+    Pure function: same input → same output. No side effects.
+
+    Args:
+        epoch_ms: Epoch milliseconds as string or int. May be None/empty.
+
+    Returns:
+        ISO 8601 datetime string (e.g., "2026-07-22T17:42:45.886000+00:00"),
+        or empty string if input is not a valid epoch.
+    """
+    if not epoch_ms:
+        return ""
+    try:
+        ms = int(epoch_ms)
+        return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
+    except (ValueError, TypeError, OSError, OverflowError):
+        return ""
+
+
+def _normalize_book_snapshot(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize a Polymarket book snapshot to event_store schema fields.
+
+    Polymarket WS pushes book snapshots (not individual trades/ticks). Each
+    snapshot is converted to a single "tick" event with the last trade price
+    and total book volume. This abstracts away the difference between tick
+    streams and book snapshots so downstream code (EventCapture, strategy)
+    sees a consistent interface.
+
+    Pure function: same input → same output. No I/O, no side effects.
+
+    Args:
+        data: Dict from WS message. Required: market, asset_id, timestamp.
+            Optional: bids, asks, last_trade_price, event_type, hash.
+
+    Returns:
+        Dict with: market_id, asset_id, price, volume, timestamp (ISO 8601),
+            event_type, hash. None if data is malformed (missing required fields).
+    """
+    if not isinstance(data, dict):
+        return None
+
+    market = data.get("market", "")
+    asset_id = data.get("asset_id", "")
+    timestamp_ms = data.get("timestamp", "")
+    if not market or not timestamp_ms:
+        return None
+
+    # Calculate book volume (sum of bid + ask sizes) for the event_store.
+    bids = data.get("bids") or []
+    asks = data.get("asks") or []
+    book_volume = 0.0
+    for b in bids:
+        try:
+            book_volume += float(b.get("size", 0) or 0)
+        except (ValueError, TypeError):
+            pass
+    for a in asks:
+        try:
+            book_volume += float(a.get("size", 0) or 0)
+        except (ValueError, TypeError):
+            pass
+
+    # Price: prefer last_trade_price (most recent executed trade), fall back
+    # to best bid (most aggressive buy order in the book).
+    price = str(data.get("last_trade_price") or "0")
+    if price == "0" and bids:
+        price = str(bids[0].get("price", "0") or "0")
+
+    return {
+        "market_id": market,
+        "asset_id": asset_id,
+        "price": price,
+        "volume": str(book_volume),
+        "timestamp": _epoch_ms_to_iso(timestamp_ms),
+        "event_type": data.get("event_type", "book"),
+        "hash": data.get("hash", ""),
+    }
+
+
 class PolymarketAdapter:
     """Stateless adapter: Polymarket CLOB API → internal contracts.
 
@@ -99,7 +183,7 @@ class PolymarketAdapter:
         """
         if not market_id:
             raise ValueError("market_id must not be empty")
-        resp = self._client.get(f"/market/{market_id}")
+        resp = self._client.get(f"/markets/{market_id}")
         resp.raise_for_status()
         return cast(dict[str, Any], resp.json())
 
@@ -212,14 +296,43 @@ class PolymarketAdapter:
         Creates an internal asyncio event loop to bridge the async websocket
         library into a synchronous generator. Blocks the calling thread.
 
-        Each yielded dict has keys: market_id, price (str), volume (str),
-        timestamp (ISO 8601 str), event_type (str: "tick"|"trade"|"orderbook_update").
+        Polymarket CLOB WebSocket message format (verified 2026-07-22):
+
+            Request:
+                {"type": "market", "assets_ids": [<token_id>, ...]}
+
+            Response (one message = one book snapshot per asset):
+                [
+                  {
+                    "market": "0x...",           # condition_id
+                    "asset_id": "526141...",     # token_id (Yes/No)
+                    "timestamp": "1784742965886",  # epoch milliseconds
+                    "bids": [{"price": "0.01", "size": "613"}, ...],
+                    "asks": [{"price": "0.99", "size": "640.96"}, ...],
+                    "tick_size": "0.01",
+                    "event_type": "book",
+                    "last_trade_price": "0.280",
+                    "hash": "a378459a1ce1da2bbff7a675129ff480fe920825"
+                  }
+                ]
+
+        The WS pushes BOOK SNAPSHOTS (not individual trades or ticks). We
+        normalize each snapshot to the event_store schema (market_id, price,
+        volume, timestamp, event_type) so downstream code (EventCapture,
+        strategy) sees a consistent interface.
+
+        DEVIATION: the original implementation assumed "tick"/"trade" events
+        with direct price/volume fields. Polymarket's actual feed only sends
+        book snapshots. The normalization layer abstracts this away.
 
         Args:
-            market_ids: List of Condition IDs to subscribe.
+            market_ids: List of Polymarket token_ids (asset_ids), NOT
+                condition_ids. Caller is responsible for the translation
+                (see paper_trading.session._resolve_token_ids).
 
         Yields:
-            dict: Parsed WS event with normalized keys.
+            dict: Normalized WS event with keys: market_id, asset_id, price,
+                volume, timestamp (ISO 8601), event_type, hash.
 
         Raises:
             ValueError: If market_ids is empty.
@@ -234,20 +347,22 @@ class PolymarketAdapter:
             """Connect to WS, receive messages, feed queue."""
             try:
                 async with websockets.connect(self._ws_url) as ws:
+                    # CORRECTED (2026-07-22): Polymarket expects type=market
+                    # with assets_ids (not type=subscribe with asset_ids).
+                    # Original spec assumed a different format that the
+                    # CLOB WS does not implement.
                     subscribe_msg = json.dumps(
-                        {"type": "subscribe", "asset_ids": market_ids}
+                        {"type": "market", "assets_ids": market_ids}
                     )
                     await ws.send(subscribe_msg)
                     async for message in ws:
-                        data = json.loads(message)
-                        event = {
-                            "market_id": data.get("market_id", ""),
-                            "price": data.get("price", "0"),
-                            "volume": data.get("volume", "0"),
-                            "timestamp": data.get("timestamp", ""),
-                            "event_type": data.get("event_type", "tick"),
-                        }
-                        await queue.put(event)
+                        data_list = json.loads(message)
+                        if not isinstance(data_list, list):
+                            continue
+                        for data in data_list:
+                            event = _normalize_book_snapshot(data)
+                            if event is not None:
+                                await queue.put(event)
             except websockets.ConnectionClosed:
                 pass  # Generator will stop gracefully
             finally:

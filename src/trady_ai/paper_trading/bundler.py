@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import socket
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -138,7 +139,88 @@ class EvidenceBundler:
         logger.info("evidence_bundle_regenerated", day=day, domain=domain)
         return self.bundle(report)
 
+    # ── Calibration bundle ──────────────────────────────────────────────────
+
+    def calibration_bundle(
+        self,
+        evidence_report: Any,
+        adoption_config: Any,
+        day: int | None = None,
+    ) -> Path:
+        """Generate a calibration evidence bundle.
+
+        Creates ``cal-NNN/`` directory with evidence_report, adopted_config,
+        provenance, and manifest files — all with SHA-256 checksums.
+
+        Args:
+            evidence_report: EvidenceReport instance (or any object with
+                ``dataclasses.asdict`` support).
+            adoption_config: AdoptedStateSpace instance.
+            day: Optional day number for directory naming. Defaults to current
+                UTC day-of-month.
+
+        Returns:
+            ``Path`` to the created ``cal-NNN/`` directory.
+        """
+        if day is None:
+            day = datetime.now(UTC).day
+
+        cal_dir = self._cal_day_dir(day)
+        cal_dir.mkdir(parents=True, exist_ok=True)
+
+        ts = datetime.now(UTC).strftime("%H%M%S")
+
+        # ── Write evidence report ───────────────────────────────────────────
+        report_path = cal_dir / f"evidence_report-{ts}.json"
+        report_data = _dataclass_to_dict(evidence_report)
+        report_path.write_text(json.dumps(report_data, indent=2, default=str))
+
+        # ── Write adopted config ────────────────────────────────────────────
+        config_path = cal_dir / f"adopted_config-{ts}.json"
+        config_data = _dataclass_to_dict(adoption_config)
+        config_path.write_text(json.dumps(config_data, indent=2, default=str))
+
+        # ── Write provenance ────────────────────────────────────────────────
+        provenance = {
+            "hostname": socket.gethostname(),
+            "timestamp": datetime.now(UTC).isoformat(),
+            "files": ["evidence_report", "adopted_config"],
+        }
+        provenance_path = cal_dir / f"provenance-{ts}.json"
+        provenance_path.write_text(json.dumps(provenance, indent=2, default=str))
+
+        # ── Compute SHA-256 checksums ────────────────────────────────────────
+        checksums: dict[str, str] = {}
+        for name in [
+            f"evidence_report-{ts}.json",
+            f"adopted_config-{ts}.json",
+            f"provenance-{ts}.json",
+        ]:
+            content = (cal_dir / name).read_bytes()
+            checksums[name] = hashlib.sha256(content).hexdigest()
+
+        # ── Write manifest ──────────────────────────────────────────────────
+        manifest = {
+            "type": "calibration",
+            "day": day,
+            "created_at": datetime.now(UTC).isoformat(),
+            "artifact_checksums": checksums,
+        }
+        manifest_path = cal_dir / f"manifest-{ts}.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
+
+        logger.info(
+            "calibration_bundle_created",
+            day=day,
+            path=str(cal_dir),
+        )
+        return cal_dir
+
     # ── Internal helpers ─────────────────────────────────────────────────────
+
+    def _cal_day_dir(self, day: int) -> Path:
+        """Return ``cal-NNN/`` path beneath ``paper_trading/``."""
+        return self._output_base / "paper_trading" / f"cal-{day:03d}"
 
     def _day_dir(self, day: int) -> Path:
         """Return ``dia-NNN/`` path beneath ``paper_trading/``."""

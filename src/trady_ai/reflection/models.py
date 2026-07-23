@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 VALID_PROPOSAL_STATUSES: set[str] = {"draft", "submitted"}
 
@@ -99,4 +100,5 @@ class ReflectionReport:
     drift_events: list[DriftEvent] = field(default_factory=list)
     proposals: list[Proposal] = field(default_factory=list)
     calibration_state: str = "uncalibrated"
+    evidence_report: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))

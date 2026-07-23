@@ -312,7 +312,7 @@ class TestGetMarkets:
 class TestGetMarketData:
     @patch("trady_ai.adapters.polymarket.httpx.Client")
     def test_get_market_data_makes_request(self, mock_client):
-        """get_market_data GETs /market/{id} with correct ID."""
+        """get_market_data GETs /markets/{id} with correct ID."""
         mock_instance = mock_client.return_value
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -327,7 +327,7 @@ class TestGetMarketData:
         result = a.get_market_data("0xabc")
 
         assert result["market_id"] == "0xabc"
-        mock_instance.get.assert_called_once_with("/market/0xabc")
+        mock_instance.get.assert_called_once_with("/markets/0xabc")
 
     @patch("trady_ai.adapters.polymarket.httpx.Client")
     def test_get_market_data_empty_id_raises(self, mock_client):
@@ -430,43 +430,57 @@ class TestSubscribeWebSocket:
 
     @patch("trady_ai.adapters.polymarket.websockets.connect")
     def test_subscribe_websocket_yields_events(self, mock_connect, adapter):
-        """subscribe_websocket yields parsed events from WS messages."""
+        """subscribe_websocket yields normalized events from WS book snapshots."""
+        # Polymarket sends a LIST of book snapshot objects per message.
         messages = [
             json.dumps(
-                {
-                    "market_id": "0xabc",
-                    "price": "0.70",
-                    "volume": "2000",
-                    "timestamp": "2026-07-08T12:00:00Z",
-                    "event_type": "tick",
-                }
+                [
+                    {
+                        "market": "0xabc",
+                        "asset_id": "tok1",
+                        "timestamp": "1784742965886",  # ms epoch
+                        "bids": [{"price": "0.01", "size": "100"}],
+                        "asks": [{"price": "0.99", "size": "200"}],
+                        "last_trade_price": "0.70",
+                        "event_type": "book",
+                        "hash": "h1",
+                    }
+                ]
             ),
             json.dumps(
-                {
-                    "market_id": "0xdef",
-                    "price": "0.85",
-                    "volume": "500",
-                    "timestamp": "2026-07-08T12:01:00Z",
-                    "event_type": "trade",
-                }
+                [
+                    {
+                        "market": "0xdef",
+                        "asset_id": "tok2",
+                        "timestamp": "1784743026000",
+                        "bids": [],
+                        "asks": [],
+                        "last_trade_price": "0.85",
+                        "event_type": "book",
+                        "hash": "h2",
+                    }
+                ]
             ),
         ]
         mock_ws = _AsyncMockWS(messages)
         mock_connect.return_value = mock_ws
 
-        events = list(adapter.subscribe_websocket(["0xabc"]))
+        events = list(adapter.subscribe_websocket(["tok1"]))
 
         assert len(events) == 2
         assert events[0]["market_id"] == "0xabc"
+        assert events[0]["asset_id"] == "tok1"
         assert events[0]["price"] == "0.70"
-        assert events[0]["volume"] == "2000"
-        assert events[0]["event_type"] == "tick"
+        # Volume = 100 (bid) + 200 (ask) = 300
+        assert events[0]["volume"] == "300.0"
+        assert events[0]["event_type"] == "book"
+        assert "2026" in events[0]["timestamp"]  # ISO format
         assert events[1]["market_id"] == "0xdef"
-        assert events[1]["event_type"] == "trade"
+        assert events[1]["price"] == "0.85"
 
     @patch("trady_ai.adapters.polymarket.websockets.connect")
     def test_subscribe_websocket_sends_subscribe_message(self, mock_connect, adapter):
-        """subscribe_websocket sends a subscribe message with asset_ids."""
+        """subscribe_websocket sends type=market subscribe with assets_ids."""
         mock_ws = _AsyncMockWS([])
         mock_connect.return_value = mock_ws
 
@@ -475,8 +489,8 @@ class TestSubscribeWebSocket:
 
         assert len(mock_ws.sent_messages) == 1
         sent = json.loads(mock_ws.sent_messages[0])
-        assert sent["type"] == "subscribe"
-        assert sent["asset_ids"] == ["0xabc", "0xdef"]
+        assert sent["type"] == "market"
+        assert sent["assets_ids"] == ["0xabc", "0xdef"]
 
     @patch("trady_ai.adapters.polymarket.websockets.connect")
     def test_subscribe_websocket_handles_connection_closed(self, mock_connect, adapter):
@@ -486,3 +500,130 @@ class TestSubscribeWebSocket:
 
         events = list(adapter.subscribe_websocket(["0xabc"]))
         assert len(events) == 0
+
+
+# ── Module-level helper tests ──────────────────────────────────────────────
+
+
+class TestEpochMsToIso:
+    """Tests for _epoch_ms_to_iso (Polymarket timestamp converter)."""
+
+    def test_converts_string_epoch(self):
+        from trady_ai.adapters.polymarket import _epoch_ms_to_iso
+
+        result = _epoch_ms_to_iso("1784742965886")
+        # 1784742965886 ms = 2026-07-22 17:56:05 UTC
+        assert result.startswith("2026-07-22T17:56:05")
+        assert "+00:00" in result
+
+    def test_converts_int_epoch(self):
+        from trady_ai.adapters.polymarket import _epoch_ms_to_iso
+
+        result = _epoch_ms_to_iso(1784742965886)
+        assert result.startswith("2026-07-22T17:56:05")
+
+    def test_empty_returns_empty_string(self):
+        from trady_ai.adapters.polymarket import _epoch_ms_to_iso
+
+        assert _epoch_ms_to_iso("") == ""
+        assert _epoch_ms_to_iso(None) == ""
+
+    def test_invalid_returns_empty_string(self):
+        from trady_ai.adapters.polymarket import _epoch_ms_to_iso
+
+        assert _epoch_ms_to_iso("not-a-number") == ""
+        assert _epoch_ms_to_iso("abc123") == ""
+
+
+class TestNormalizeBookSnapshot:
+    """Tests for _normalize_book_snapshot (Polymarket WS → event_store schema)."""
+
+    def test_normalizes_full_snapshot(self):
+        from trady_ai.adapters.polymarket import _normalize_book_snapshot
+
+        data = {
+            "market": "0xabc",
+            "asset_id": "tok1",
+            "timestamp": "1784742965886",
+            "bids": [{"price": "0.01", "size": "100"}, {"price": "0.02", "size": "50"}],
+            "asks": [{"price": "0.99", "size": "200"}],
+            "last_trade_price": "0.70",
+            "event_type": "book",
+            "hash": "h1",
+        }
+        result = _normalize_book_snapshot(data)
+
+        assert result is not None
+        assert result["market_id"] == "0xabc"
+        assert result["asset_id"] == "tok1"
+        assert result["price"] == "0.70"
+        # Volume = 100 + 50 + 200 = 350
+        assert result["volume"] == "350.0"
+        assert result["event_type"] == "book"
+        assert result["hash"] == "h1"
+        assert "2026" in result["timestamp"]
+
+    def test_missing_required_returns_none(self):
+        from trady_ai.adapters.polymarket import _normalize_book_snapshot
+
+        # Missing market
+        assert _normalize_book_snapshot({"timestamp": "123", "asset_id": "t"}) is None
+        # Missing timestamp
+        assert _normalize_book_snapshot({"market": "0xabc", "asset_id": "t"}) is None
+        # Empty market
+        assert _normalize_book_snapshot({"market": "", "timestamp": "123"}) is None
+
+    def test_handles_empty_bids_asks(self):
+        from trady_ai.adapters.polymarket import _normalize_book_snapshot
+
+        data = {
+            "market": "0xabc",
+            "asset_id": "t",
+            "timestamp": "1784742965886",
+            "bids": [],
+            "asks": [],
+            "last_trade_price": "0.50",
+        }
+        result = _normalize_book_snapshot(data)
+        assert result is not None
+        assert result["volume"] == "0.0"
+        assert result["price"] == "0.50"
+
+    def test_falls_back_to_best_bid_when_no_last_trade(self):
+        from trady_ai.adapters.polymarket import _normalize_book_snapshot
+
+        data = {
+            "market": "0xabc",
+            "asset_id": "t",
+            "timestamp": "1784742965886",
+            "bids": [{"price": "0.45", "size": "100"}],
+            "asks": [{"price": "0.55", "size": "100"}],
+            # No last_trade_price
+        }
+        result = _normalize_book_snapshot(data)
+        assert result is not None
+        assert result["price"] == "0.45"  # best bid
+
+    def test_handles_non_dict(self):
+        from trady_ai.adapters.polymarket import _normalize_book_snapshot
+
+        assert _normalize_book_snapshot("not a dict") is None  # type: ignore[arg-type]
+        assert _normalize_book_snapshot(None) is None  # type: ignore[arg-type]
+        assert _normalize_book_snapshot(123) is None  # type: ignore[arg-type]
+
+    def test_handles_malformed_sizes_gracefully(self):
+        from trady_ai.adapters.polymarket import _normalize_book_snapshot
+
+        data = {
+            "market": "0xabc",
+            "asset_id": "t",
+            "timestamp": "1784742965886",
+            "bids": [{"price": "0.01", "size": "not-a-number"}, {"price": "0.02", "size": None}],
+            "asks": [{"price": "0.99"}],  # no size key
+            "last_trade_price": "0.50",
+        }
+        # Should not raise; just skip malformed sizes
+        result = _normalize_book_snapshot(data)
+        assert result is not None
+        # Only valid sizes count
+        assert result["volume"] == "0.0"

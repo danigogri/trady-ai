@@ -2,7 +2,7 @@
 
 > Generado desde BACKLOG-PROTOCOL v1
 > Auditoría inicial: 2026-07-09
-> Última actualización: 2026-07-21 (BL-024, BL-025, BL-026 — Paper Trading v2 verify phase ruff findings)
+> Última actualización: 2026-07-22 (BL-027, BL-028, BL-029 — Portable OS compliance hallazgos; BL-029 cerrado con 29 tests; BL-030 — bundle path duplicado post-dry-run; BL-031 — 8 tests de integración preexistentes rotos)
 
 ---
 
@@ -112,6 +112,32 @@ Se detectó un bug preexistente durante el triage: `init_db` en `db/database.py`
 
 ---
 
+## Fase 5 — Paper Trading Deployment (Compliance hallazgos)
+
+> Fuente: Portable OS compliance review del `scripts/ensure_active_market.py` modificado el 2026-07-22 (deployed durante Phase 1 de deployment a AWS Lightsail). Veredicto: script técnicamente sólido, pero violó proceso del framework (BACKLOG-PROTOCOL §3/§7/§10, Architecture Contract §27, Operations Manual §6 Discovery Protocol). Ver detalle en `paper_trading/SESSION-2026-07-22.md` y `paper_trading/MARKET-DISCOVERY-FIX.md`.
+
+### Orden 1: BL-027 (deuda P0 — deviation del contract)
+
+[BL-027] | deuda | alta | scripts/ensure_active_market.py | **Deviation from frozen Architecture Contract OC-2.** Implementado 2026-07-22 como hotfix: el discovery mechanism usa HTML scraping (`polymarket.com/sports/{league}/games`) + `gamma-api/events?slug={slug}` + `clob.polymarket.com/markets/{conditionId}` en vez del flow documentado en OC-2 (single `clob/markets` con filter de tags). Eligibility rules cambiaron de "tags contains `football` AND `winner`" a regex sobre question field (`^Will .+ win on YYYY-MM-DD?$`). Documentado en 3 lugares (docstring del script, `paper_trading/SESSION-2026-07-22.md`, `paper_trading/MARKET-DISCOVERY-FIX.md`) pero NO siguió el proceso: sin contract amendment, sin SDD cycle, sin verify-report (mypy/ruff/pytest), sin governance review (Operations Manual §6 Discovery Protocol truncado en Authorize y Close). Sin tests del script. | abierto
+
+### Orden 2: BL-028 (mejora P0 — formalizar)
+
+[BL-028] | mejora | alta | Papertrading review/PAPER-TRADING-ARCHITECTURE-CONTRACT.md | **Amend Architecture Contract to v2.0:** formalizar el 3-endpoint discovery mechanism, documentar las regex de elegibilidad como frozen rules (en formato legible para operator review, no código embebido), agregar sección "Documented Deviations / Errata" con referencia a BL-027, realizar impact assessment contra RFC-000..009 (Auditability, Determinism, Integration Hostility, etc.). Coordinar con BL-029 (externalized config) y BL-018..BL-026 (open items del paper trading). Mini-SDD cycle recomendado: proposal → spec → design → tasks → apply → verify → archive. | abierto
+
+### Orden 3: BL-029 (mejora P0 — externalize config, multi-league configurable)
+
+[BL-029] | mejora | media | scripts/ensure_active_market.py, .env.example | **Externalize hardcoded discovery config to .env (resuelve pedido de multi-league).** Mover `_CANDIDATE_LEAGUES` y los regex (`_WIN_QUESTION_PATTERN`, `_REJECT_PATTERNS`) a variables de entorno: `TRADY_AI_FOOTBALL_LEAGUES` (comma-separated), `TRADY_AI_WINNER_PATTERN` (regex string), `TRADY_AI_REJECT_PATTERNS` (comma-separated substrings). Cumplir con AD-5 del Architecture Contract: "operator may adjust frozen rules at review windows" sin deploy de código. Mantener defaults hardcoded como fallback si las variables no están presentes (backward compat). Multi-league configurable es pedido explícito del operador (sesión 2026-07-22): "el sistema pueda mantenerse solo y funcionar solo". | cerrado (implementado 2026-07-22 con 29 tests, verify-report)
+
+### Orden 4: BL-031 (tests de integración preexistentes — no bloqueantes)
+
+[BL-031] | bug | media | tests/integration/test_paper_trading_session.py, tests/paper_trading/test_guard.py, tests/paper_trading/test_reconstruction.py | **8 tests de integración fallan consistentemente (preexistentes a Phase A del Calibration Framework).** Detectados durante verify de `calibration-framework` Phase A (2026-07-22). Los 8 tests requieren fixtures específicos (DB con estado, WebSocket mock, `.env` poblado) que no están presentes en el entorno de test actual. No son regresiones — ya fallaban antes del refactor del engine. No bloquean Phase B ni el resto del desarrollo. Scope: integración y guard script. | abierto
+
+### Orden 5: BL-030 (cosmético — post-dry-run)
+
+[BL-030] | bug | baja | src/trady_ai/paper_trading/bundler.py | **Bundle path `paper_trading/paper_trading/dia-001/` shows doubled prefix.** El bundler concatena `config.bundle_base_dir` (que el operador setea como `paper_trading/` relativo al CWD) con el path relativo del día, resultando en `paper_trading/paper_trading/` porque el CWD ya está dentro de `paper_trading/`. No blocker: el bundle se genera correctamente, los checksums son válidos, y la regeneración reproduce el mismo path. Arreglar: usar path absoluto desde `config.repo_root` en vez de path relativo al CWD, o normalizar `/` redundantes en la concatenación. | abierto
+
+---
+
 ## 🧠 NOTAS
 
 - **Estado Fase 1**: ✅ Limpia. mypy: 0 errores. pytest: 117 pass. Coverage: 97%.
@@ -127,7 +153,11 @@ Se detectó un bug preexistente durante el triage: `init_db` en `db/database.py`
   - BL-015 (schema NOT NULL) puede romper tests que no populan el campo requerido — verificar todos los callers de append_event.
   - SQLite + threads: `check_same_thread=False` necesario cuando EventCapture (daemon thread) accede la DB creada en thread principal.
   - BL-014: Polymarket CLOB API no tiene endpoint histórico de eventos individuales — `/prices-history` devuelve datos agregados (OHLC-like), no eventos. WS no tiene resumption protocol. Limitación documentada.
+  - **2026-07-22**: La regla "do not touch backlog" se malinterpretó ayer. BACKLOG-PROTOCOL §1: "Todo hallazgo se registra" — registration es **mandatory**, no opcional. La regla de scope (§2) se refiere a no *trabajar* en hallazgos sin autorización, no a no *registrarlos*. BL-027/028/029 hubieran debido crearse ANTES del fix del script.
+  - **2026-07-22**: Polymarket discovery: API REST no expone sports via tags. Working path: `polymarket.com/sports/{league}/games` (HTML) → `gamma-api/events?slug={slug}` → `clob.polymarket.com/markets/{conditionId}`. Lecciones: User-Agent `Python-urllib/3.12` → 403; usar browser UA. Cuando API no expone datos, la web sí los tiene (HTML + Next.js + Schema.org JSON-LD).
 - **Decisiones del usuario**:
   - BL-013: capture state siempre "stopped" en Fase 2 (EventCapture efímero, no overengineering con pidfile). Documentar como limitación.
   - Orden de ejecución ajustado: BL-010+011 antes que BL-009 (destraba validación antes de meterse en mypy denso).
   - BL-014: investigar Polymarket API antes de implementar (Option A). Resultado: no existe endpoint histórico → declarar limitación.
+  - 2026-07-22: Paper Trading discovery es autonomous-first (Approach A). El sistema descubre markets solo via guard script, sin intervención del operador. Operator ajusta reglas frozen via `.env` (no deploy de código) — BL-029.
+  - 2026-07-22: Remediación de P0+P1 del Portable OS compliance review se hace ANTES del dry-run session. Test rigor importa más que velocidad.

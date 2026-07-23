@@ -5,7 +5,7 @@ import sqlite_utils
 import structlog
 
 from trady_ai.config.runtime_config import RuntimeConfig
-from trady_ai.core.models import ExecutionDecision, MarketInput, Position, Signal, Trade
+from trady_ai.core.models import ExecutionDecision, MarketInput, MarketState, Position, Signal, Trade
 from trady_ai.core.normalization import normalize
 from trady_ai.core.observability import compute_summary
 from trady_ai.core.persistence import (
@@ -18,6 +18,7 @@ from trady_ai.core.position_manager import PositionManager
 from trady_ai.core.risk import RiskEnforcer
 from trady_ai.core.signal_strategy import SignalStrategy
 from trady_ai.core.state import MarketStateTracker
+from trady_ai.strategies.markov.state_generator import StateGenerator
 
 logger = structlog.get_logger()
 
@@ -50,11 +51,19 @@ class ExecutionEngine:
     Fail-fast: any exception propagates immediately — no try/except silence.
     """
 
-    def __init__(self, config: RuntimeConfig, db: sqlite_utils.Database, dry_run: bool = True):
+    def __init__(
+        self,
+        config: RuntimeConfig,
+        db: sqlite_utils.Database,
+        dry_run: bool = True,
+        state_generator: StateGenerator | None = None,
+    ):
         self._config = config
         self._db = db
         self._dry_run = dry_run
+        self._state_generator = state_generator
         self._state_tracker = MarketStateTracker(config.threshold_pct)
+        self._previous_states: dict[str, str | None] = {}
         self._risk_enforcer = RiskEnforcer()
         self._position_manager = PositionManager()
 
@@ -76,7 +85,22 @@ class ExecutionEngine:
             normalized = normalize(raw_input)
 
             # 2. Classify market state
-            state = self._state_tracker.update(normalized)
+            if self._state_generator:
+                idx = self._state_generator.classify(normalized)
+                label = self._state_generator.state_labels[idx]
+                prev = self._previous_states.get(normalized.market_id)
+                state = MarketState(
+                    market_id=normalized.market_id,
+                    timestamp=normalized.timestamp,
+                    price=normalized.price,
+                    volume=normalized.volume,
+                    state=label,
+                    previous_state=prev,
+                    source="state_generator",
+                )
+                self._previous_states[normalized.market_id] = label
+            else:
+                state = self._state_tracker.update(normalized)
 
             # 3. Update strategy
             strategy.update(state)

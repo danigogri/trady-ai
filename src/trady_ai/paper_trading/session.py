@@ -304,8 +304,20 @@ class PaperTradingSession:
             logger.warning("capture_skipped_no_adapter")
             return
 
+        # Translate condition_ids to token_ids (Polymarket WS expects asset_ids).
+        # This fixes a bug where the WS was receiving condition_ids, which are
+        # not the correct identifier for the CLOB WebSocket subscription.
+        token_ids = self._resolve_token_ids(market_ids)
+        if not token_ids:
+            logger.warning("no_token_ids_resolved", condition_ids=market_ids)
+        logger.info(
+            "ws_subscription_tokens",
+            condition_ids=market_ids,
+            token_ids=token_ids,
+        )
+
         capture = EventCapture(self._adapter, self._db)
-        capture.start(market_ids)
+        capture.start(token_ids)
 
         try:
             if non_interactive:
@@ -407,6 +419,42 @@ class PaperTradingSession:
             last_trade_ts=last_trade_ts,
         )
         return skip
+
+    def _resolve_token_ids(self, condition_ids: list[str]) -> list[str]:
+        """Translate Polymarket condition IDs to CLOB token IDs.
+
+        The Polymarket CLOB WebSocket expects asset_ids (which are the
+        token_ids from market.tokens[].token_id), NOT condition_ids.
+        Subscribing with condition_ids results in silent failure — the WS
+        accepts the subscription but never sends events because no market
+        matches those IDs.
+
+        This method fetches each market's metadata and extracts token_ids
+        from the ``tokens`` field. Both Yes and No token_ids are returned
+        so the WS subscription captures price movement for the full market.
+
+        Args:
+            condition_ids: List of Polymarket condition IDs.
+
+        Returns:
+            List of token_ids (one Yes + one No per condition_id). Markets
+            that fail to resolve are logged at WARNING and skipped.
+        """
+        token_ids: list[str] = []
+        for cond_id in condition_ids:
+            try:
+                market = self._adapter.get_market_data(cond_id)
+                for token in market.get("tokens", []):
+                    tid = token.get("token_id", "")
+                    if tid:
+                        token_ids.append(tid)
+            except Exception as e:  # noqa: BLE001 - log and skip, do not fail capture
+                logger.warning(
+                    "token_id_resolution_failed",
+                    condition_id=cond_id,
+                    error=str(e),
+                )
+        return token_ids
 
     # ── Collaborator factories ───────────────────────────────────────────────
 

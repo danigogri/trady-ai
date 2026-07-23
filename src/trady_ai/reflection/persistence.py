@@ -99,6 +99,9 @@ def _serialize_report_data(report: ReflectionReport) -> str:
         for p in report.proposals
     ]
 
+    if report.evidence_report is not None:
+        data["evidence_report"] = report.evidence_report
+
     return json.dumps(data, default=_serialize_value)
 
 
