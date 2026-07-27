@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 r"""Discovery Clock guard — deterministic pre-session market rotation.
 
-For football-winner markets, queries Polymarket's sports pages to discover
-active games, then uses gamma-api to get the event with its markets.
+For domain-agnostic discovery. Supports league-based (FOOTBALL-WINNER) and
+tag-based (CRYPTO-BINARY) domains, routing to the correct discovery strategy
+based on TRADY_AI_DOMAIN.
 
 Algorithm (per ARCHITECTURE-CONTRACT OC-2):
   1. Read TRADY_AI_ACTIVE_MARKETS from .env
@@ -10,11 +11,14 @@ Algorithm (per ARCHITECTURE-CONTRACT OC-2):
      a. Query clob.polymarket.com/markets/{id}
      b. If closed == true OR not active -> mark as EXPIRED
   3. If ALL markets are EXPIRED:
-     a. For each candidate league (mex, mls, epl, ...):
-        - Fetch polymarket.com/sports/{league}/games
-        - Extract slugs from HTML
-        - For each slug, query gamma-api/events?slug={slug}
-        - Take first "Will X win" market with active=True, closed=False
+     a. Based on TRADY_AI_DOMAIN:
+        - FOOTBALL-WINNER: for each candidate league (mex, mls, epl, ...):
+          * Fetch polymarket.com/sports/{league}/games
+          * Extract slugs from HTML
+          * For each slug, query gamma-api/events?slug={slug}
+          * Take first eligible market with active=True, closed=False
+        - CRYPTO-BINARY: single GET /events?tag_slug={slug}
+          * Walk event markets, apply same eligibility filter
      b. If found -> write conditionId to .env, exit 0
      c. If not found -> exit 1 (fail-fast)
   4. If at least one market is still active -> exit 0 (no action)
@@ -66,8 +70,8 @@ _DEFAULT_LEAGUES = [
 ]
 
 # "Will X win on YYYY-MM-DD?" — strict pattern for match-winner markets.
-# Default; overridable via TRADY_AI_WINNER_PATTERN in .env.
-_DEFAULT_WINNER_PATTERN = r"^Will .+ win on \d{4}-\d{2}-\d{2}\??$"
+# Default; overridable via TRADY_AI_QUESTION_PATTERN in .env.
+_DEFAULT_QUESTION_PATTERN = r"^Will .+ win on \d{4}-\d{2}-\d{2}\??$"
 # Negative patterns (markets we DO NOT want).
 # Defaults; overridable via TRADY_AI_REJECT_PATTERNS in .env (comma-separated).
 _DEFAULT_REJECT_PATTERNS = [
@@ -174,6 +178,9 @@ def _write_env(env_path: str, updates: dict[str, str]) -> None:
 
 # ── Discovery config (externalized per BL-029, AD-5) ─────────────────────
 
+_VALID_DOMAINS = {"FOOTBALL-WINNER", "CRYPTO-BINARY"}
+_DOMAIN_LEGACY_VARS = {"TRADY_AI_FOOTBALL_LEAGUES", "TRADY_AI_WINNER_PATTERN"}
+
 
 def _load_discovery_config(env: dict[str, str] | None = None) -> dict[str, Any]:
     """Load discovery rules from .env, falling back to frozen defaults.
@@ -187,15 +194,54 @@ def _load_discovery_config(env: dict[str, str] | None = None) -> dict[str, Any]:
 
     Returns:
         dict with keys:
-          - leagues: list[str]            (TRADY_AI_FOOTBALL_LEAGUES)
-          - winner_pattern: re.Pattern[str]  (TRADY_AI_WINNER_PATTERN)
+          - domain: str                      (TRADY_AI_DOMAIN)
+          - tag_slug: str | None             (TRADY_AI_DISCOVERY_TAG_SLUG)
+          - leagues: list[str]               (TRADY_AI_FOOTBALL_LEAGUES)
+          - question_pattern: re.Pattern[str]  (TRADY_AI_QUESTION_PATTERN,
+                                                fallback TRADY_AI_WINNER_PATTERN)
           - reject_patterns: list[re.Pattern[str]]  (TRADY_AI_REJECT_PATTERNS)
 
     Raises:
-        re.error: If TRADY_AI_WINNER_PATTERN is set but invalid regex.
+        re.error: If the resolved question pattern is invalid regex.
+        SystemExit: If domain is invalid or tag_slug missing for tag-based domain.
     """
     if env is None:
         env = _load_env()
+
+    # ── Domain ──
+    domain = env.get("TRADY_AI_DOMAIN", "").strip() or "FOOTBALL-WINNER"
+    if domain not in _VALID_DOMAINS:
+        valid_list = ", ".join(sorted(_VALID_DOMAINS))
+        logger.error(
+            "invalid_domain",
+            extra={"domain": domain, "valid_domains": valid_list},
+        )
+        sys.exit(1)
+
+    # ── Tag slug (required for tag-based domains) ──
+    tag_slug_raw = env.get("TRADY_AI_DISCOVERY_TAG_SLUG")
+    tag_slug: str | None = tag_slug_raw.strip() if tag_slug_raw else None
+    if domain == "CRYPTO-BINARY":
+        if not tag_slug:
+            logger.error(
+                "missing_tag_slug",
+                extra={"domain": domain},
+            )
+            sys.exit(1)
+
+    # ── Deprecation warning for legacy vars without explicit domain ──
+    domain_explicit = "TRADY_AI_DOMAIN" in env
+    if not domain_explicit and any(v in env for v in _DOMAIN_LEGACY_VARS):
+        logger.warning(
+            "legacy_vars_without_domain_deprecated",
+            extra={
+                "detail": (
+                    "TRADY_AI_DOMAIN is not set. Legacy vars "
+                    "TRADY_AI_FOOTBALL_LEAGUES and TRADY_AI_WINNER_PATTERN "
+                    "are deprecated. Set TRADY_AI_DOMAIN explicitly."
+                ),
+            },
+        )
 
     # ── Leagues ──
     leagues_str = env.get("TRADY_AI_FOOTBALL_LEAGUES", "").strip()
@@ -204,11 +250,13 @@ def _load_discovery_config(env: dict[str, str] | None = None) -> dict[str, Any]:
     else:
         leagues = list(_DEFAULT_LEAGUES)
 
-    # ── Winner pattern ──
-    winner_str = env.get("TRADY_AI_WINNER_PATTERN", "").strip()
-    if not winner_str:
-        winner_str = _DEFAULT_WINNER_PATTERN
-    winner_pattern = re.compile(winner_str)
+    # ── Question pattern (TRADY_AI_QUESTION_PATTERN takes precedence) ──
+    question_str = env.get("TRADY_AI_QUESTION_PATTERN", "").strip()
+    if not question_str:
+        question_str = env.get("TRADY_AI_WINNER_PATTERN", "").strip()
+    if not question_str:
+        question_str = _DEFAULT_QUESTION_PATTERN
+    question_pattern = re.compile(question_str)
 
     # ── Reject patterns ──
     reject_str = env.get("TRADY_AI_REJECT_PATTERNS", "").strip()
@@ -221,10 +269,73 @@ def _load_discovery_config(env: dict[str, str] | None = None) -> dict[str, Any]:
     ]
 
     return {
+        "domain": domain,
+        "tag_slug": tag_slug,
         "leagues": leagues,
-        "winner_pattern": winner_pattern,
+        "question_pattern": question_pattern,
         "reject_patterns": reject_patterns,
     }
+
+
+# ── Tag-based discovery ─────────────────────────────────────────────────
+
+
+def _discover_tag_based(
+    tag_slug: str,
+    question_pattern: re.Pattern[str],
+    reject_patterns: list[re.Pattern[str]],
+) -> str | None:
+    """Discover an eligible market via gamma-api events endpoint.
+
+    Calls GET /events?tag_slug={slug}&active=true&closed=false&limit=50,
+    walks all embedded markets across events, applies eligibility filter
+    and CLOB double-check.
+
+    Args:
+        tag_slug: Tag slug for domain filtering (e.g., "crypto").
+        question_pattern: Compiled regex for acceptable questions.
+        reject_patterns: List of compiled reject regexes.
+
+    Returns:
+        condition_id of the first eligible market, or None if none found.
+    """
+    url = (
+        f"https://gamma-api.polymarket.com/events"
+        f"?tag_slug={tag_slug}&active=true&closed=false&limit=50"
+    )
+    data = _http_get_json(url, timeout=15)
+    if not data:
+        logger.warning(
+            "http_get_failed",
+            extra={"url": url, "detail": "tag-based discovery got no response"},
+        )
+        return None
+    events: list[Any] = data if isinstance(data, list) else []
+    if not events:
+        logger.info("no_markets_found", extra={"tag_slug": tag_slug})
+        return None
+
+    for event in events:
+        markets: list[dict[str, Any]] = cast(
+            list[dict[str, Any]], event.get("markets", [])
+        )
+        for market in markets:
+            if not _is_eligible_market(market, question_pattern, reject_patterns):
+                continue
+            cond_id = cast(str, market.get("conditionId") or market.get("condition_id"))
+            if not cond_id:
+                continue
+            if not market.get("active", False):
+                continue
+            if market.get("closed", False):
+                continue
+            # Double-check via CLOB (extra safety)
+            if not _query_market_active(cond_id):
+                continue
+            return cond_id
+
+    logger.info("no_markets_found", extra={"tag_slug": tag_slug})
+    return None
 
 
 # ── Polymarket queries ───────────────────────────────────────────────────
@@ -296,21 +407,21 @@ def _get_event_markets(slug: str) -> list[dict[str, Any]]:
     return cast(list[dict[str, Any]], events[0].get("markets", []))
 
 
-def _is_winner_market(
+def _is_eligible_market(
     market: dict[str, Any],
-    winner_pattern: re.Pattern[str],
+    question_pattern: re.Pattern[str],
     reject_patterns: list[re.Pattern[str]],
 ) -> bool:
-    """Check if market matches the strict winner pattern and has no reject hits.
+    """Check if market matches the question pattern and has no reject hits.
 
     Args:
         market: Market dict (must have 'question' key).
-        winner_pattern: Compiled regex for acceptable questions.
+        question_pattern: Compiled regex for acceptable questions.
         reject_patterns: List of compiled regexes; if any matches the question,
                          the market is rejected.
     """
     question = market.get("question", "")
-    if not winner_pattern.match(question):
+    if not question_pattern.match(question):
         return False
     for reject in reject_patterns:
         if reject.search(question):
@@ -320,14 +431,14 @@ def _is_winner_market(
 
 def _find_eligible_market(
     league: str,
-    winner_pattern: re.Pattern[str],
+    question_pattern: re.Pattern[str],
     reject_patterns: list[re.Pattern[str]],
 ) -> str | None:
-    """Find first eligible 'Will X win' market condition_id in a league.
+    """Find first eligible market condition_id in a league.
 
     Args:
         league: Polymarket league slug (e.g., "mex", "mls", "epl").
-        winner_pattern: Compiled regex from config.
+        question_pattern: Compiled regex from config.
         reject_patterns: List of compiled reject regexes from config.
     """
     slugs = _get_league_slugs(league)
@@ -335,7 +446,7 @@ def _find_eligible_market(
     for slug in slugs:
         markets = _get_event_markets(slug)
         for market in markets:
-            if not _is_winner_market(market, winner_pattern, reject_patterns):
+            if not _is_eligible_market(market, question_pattern, reject_patterns):
                 continue
             cond_id = cast(str, market.get("conditionId") or market.get("condition_id"))
             if not cond_id:
@@ -369,11 +480,13 @@ def main() -> int:
     try:
         config = _load_discovery_config(env)
     except re.error as e:
-        logger.error("invalid_winner_pattern", extra={"error": str(e)})
+        logger.error("invalid_question_pattern", extra={"error": str(e)})
         return 1
     leagues: list[str] = config["leagues"]
-    winner_pattern: re.Pattern[str] = config["winner_pattern"]
+    question_pattern: re.Pattern[str] = config["question_pattern"]
     reject_patterns: list[re.Pattern[str]] = config["reject_patterns"]
+    domain: str = config["domain"]
+    tag_slug: str | None = config["tag_slug"]
 
     if not current_ids:
         logger.info("no_markets_configured_attempting_discovery")
@@ -393,8 +506,10 @@ def main() -> int:
     # ── Phase 2: Rotation if needed ──────────────────────────────────────
     if expired_ids and not active_ids:
         logger.info("all_markets_expired_attempting_rotation")
-        for league in leagues:
-            new_id = _find_eligible_market(league, winner_pattern, reject_patterns)
+        if domain == "CRYPTO-BINARY":
+            new_id = _discover_tag_based(
+                tag_slug, question_pattern, reject_patterns
+            ) if tag_slug else None
             if new_id:
                 logger.info(
                     "market_rotated %s -> %s",
@@ -404,9 +519,24 @@ def main() -> int:
                 _write_env(".env", {"TRADY_AI_ACTIVE_MARKETS": new_id})
                 logger.info(
                     "env_updated",
-                    extra={"active_markets": new_id, "league": league},
+                    extra={"active_markets": new_id},
                 )
                 return 0
+        else:
+            for league in leagues:
+                new_id = _find_eligible_market(league, question_pattern, reject_patterns)
+                if new_id:
+                    logger.info(
+                        "market_rotated %s -> %s",
+                        expired_ids[0] if expired_ids else "(none)",
+                        new_id,
+                    )
+                    _write_env(".env", {"TRADY_AI_ACTIVE_MARKETS": new_id})
+                    logger.info(
+                        "env_updated",
+                        extra={"active_markets": new_id, "league": league},
+                    )
+                    return 0
 
         logger.error("no_eligible_markets_found")
         return 1
@@ -421,15 +551,27 @@ def main() -> int:
 
     # ── No markets configured and no discovery possible ───────────────────
     if not current_ids:
-        for league in leagues:
-            new_id = _find_eligible_market(league, winner_pattern, reject_patterns)
+        if domain == "CRYPTO-BINARY":
+            new_id = _discover_tag_based(
+                tag_slug, question_pattern, reject_patterns
+            ) if tag_slug else None
             if new_id:
                 _write_env(".env", {"TRADY_AI_ACTIVE_MARKETS": new_id})
                 logger.info(
                     "initial_market_discovered",
-                    extra={"market_id": new_id, "league": league},
+                    extra={"market_id": new_id},
                 )
                 return 0
+        else:
+            for league in leagues:
+                new_id = _find_eligible_market(league, question_pattern, reject_patterns)
+                if new_id:
+                    _write_env(".env", {"TRADY_AI_ACTIVE_MARKETS": new_id})
+                    logger.info(
+                        "initial_market_discovered",
+                        extra={"market_id": new_id, "league": league},
+                    )
+                    return 0
         logger.error("no_markets_available_for_discovery")
         return 1
 
