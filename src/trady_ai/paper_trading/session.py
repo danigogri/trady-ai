@@ -423,23 +423,20 @@ class PaperTradingSession:
     def _resolve_token_ids(self, condition_ids: list[str]) -> list[str]:
         """Translate Polymarket condition IDs to CLOB token IDs.
 
-        The Polymarket CLOB WebSocket expects asset_ids (which are the
-        token_ids from market.tokens[].token_id), NOT condition_ids.
-        Subscribing with condition_ids results in silent failure — the WS
-        accepts the subscription but never sends events because no market
-        matches those IDs.
-
-        This method fetches each market's metadata and extracts token_ids
-        from the ``tokens`` field. Both Yes and No token_ids are returned
-        so the WS subscription captures price movement for the full market.
+        For Polymarket: fetches market metadata and extracts token IDs.
+        For other platforms (e.g., Binance): returns condition_ids directly
+        — the market IDs are already valid subscription identifiers.
 
         Args:
-            condition_ids: List of Polymarket condition IDs.
+            condition_ids: List of market identifiers.
 
         Returns:
-            List of token_ids (one Yes + one No per condition_id). Markets
-            that fail to resolve are logged at WARNING and skipped.
+            List of token/subscription IDs.
         """
+        # Non-Polymarket adapters don't need token resolution
+        if not hasattr(self._adapter, "get_market_data"):
+            return list(condition_ids)
+
         token_ids: list[str] = []
         for cond_id in condition_ids:
             try:

@@ -118,3 +118,31 @@ def test_binance_settings_frozen(monkeypatch):
         settings.binance_rest_url = "changed"
     with pytest.raises((TypeError, ValidationError)):
         settings.active_symbols = "changed"
+
+
+# ── Bybit settings (REQ-BYC-001 through REQ-BYC-005) ─────────────────────────
+
+
+def test_bybit_settings_defaults():
+    """REQ-BYC-001/002: Default WS/REST URLs are Bybit testnet."""
+    settings = Settings()
+    assert settings.bybit_ws_url == "wss://stream-testnet.bybit.com/v5/public/spot"
+    assert settings.bybit_rest_url == "https://api-testnet.bybit.com"
+
+
+def test_bybit_settings_explicit_override(monkeypatch):
+    """REQ-BYC-001/002: Explicit env vars override defaults."""
+    monkeypatch.setenv("TRADY_AI_BYBIT_WS_URL", "wss://stream.bybit.com/v5/public/spot")
+    monkeypatch.setenv("TRADY_AI_BYBIT_REST_URL", "https://api.bybit.com")
+    settings = Settings()
+    assert settings.bybit_ws_url == "wss://stream.bybit.com/v5/public/spot"
+    assert settings.bybit_rest_url == "https://api.bybit.com"
+
+
+def test_bybit_settings_immutable():
+    """REQ-BYC-005: Bybit settings are immutable."""
+    settings = Settings()
+    with pytest.raises((TypeError, ValidationError)):
+        settings.bybit_ws_url = "changed"
+    with pytest.raises((TypeError, ValidationError)):
+        settings.bybit_rest_url = "changed"

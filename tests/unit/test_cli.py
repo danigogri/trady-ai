@@ -378,3 +378,138 @@ class TestPaperTradeCLI:
 
         assert result.exit_code == 1
         assert "No symbols" in result.output or "symbols" in result.output.lower()
+
+    # ── BYBIT-SPOT domain tests (REQ-CLI-001 through REQ-CLI-004) ────────────
+
+    def test_domain_bybit_spot_accepted(self, monkeypatch):
+        """REQ-CLI-001: --domain BYBIT-SPOT accepted."""
+        monkeypatch.setenv("TRADY_AI_ACTIVE_SYMBOLS", "BTCUSDT")
+        monkeypatch.setenv("TRADY_AI_DRY_RUN", "true")
+        get_settings.cache_clear()
+
+        from unittest.mock import patch
+
+        with patch("trady_ai.paper_trading.session.PaperTradingSession") as mock_pts:
+            mock_session = mock_pts.return_value
+            mock_report = mock_session.run_session.return_value
+            mock_report.event_count = 0
+            mock_report.trade_count = 0
+            mock_report.stage_timestamps = {}
+            mock_report.market_ids = []
+            mock_report.reflection_report_id = None
+            mock_report.calibration_state = "not_ready"
+            mock_report.contract_results = []
+
+            runner = CliRunner()
+            result = runner.invoke(cli, [
+                "paper-trade", "session",
+                "--domain", "BYBIT-SPOT",
+                "--markets", "BTCUSDT",
+                "--non-interactive",
+                "--duration", "1",
+            ])
+
+        assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"
+
+    def test_domain_bybit_unknown_still_rejected(self, monkeypatch):
+        """REQ-CLI-003: Unknown domain still rejected with BYBIT-SPOT in list."""
+        monkeypatch.setenv("TRADY_AI_ACTIVE_MARKETS", "0x123")
+        monkeypatch.setenv("TRADY_AI_DRY_RUN", "true")
+        get_settings.cache_clear()
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "paper-trade", "session",
+            "--domain", "NONSENSE",
+            "--markets", "0xabc",
+        ])
+
+        assert result.exit_code == 1
+        assert "Unknown domain" in result.output
+        assert "NONSENSE" in result.output
+        assert "BYBIT-SPOT" in result.output
+
+    def test_bybit_adapter_selection(self, monkeypatch):
+        """REQ-CLI-002: BYBIT-SPOT → BybitAdapter with ws/rest URLs."""
+        monkeypatch.setenv("TRADY_AI_ACTIVE_SYMBOLS", "BTCUSDT")
+        monkeypatch.setenv("TRADY_AI_DRY_RUN", "true")
+        get_settings.cache_clear()
+
+        from unittest.mock import patch
+
+        with patch("trady_ai.adapters.bybit.BybitAdapter") as mock_ba:
+            with patch("trady_ai.paper_trading.session.PaperTradingSession") as mock_pts:
+                mock_session = mock_pts.return_value
+                mock_report = mock_session.run_session.return_value
+                mock_report.event_count = 0
+                mock_report.trade_count = 0
+                mock_report.stage_timestamps = {}
+                mock_report.market_ids = []
+                mock_report.reflection_report_id = None
+                mock_report.calibration_state = "not_ready"
+                mock_report.contract_results = []
+
+                runner = CliRunner()
+                result = runner.invoke(cli, [
+                    "paper-trade", "session",
+                    "--domain", "BYBIT-SPOT",
+                    "--markets", "BTCUSDT",
+                    "--non-interactive",
+                    "--duration", "1",
+                ])
+
+        assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"
+        mock_ba.assert_called_once()
+        args, kwargs = mock_ba.call_args
+        assert "ws_url" in kwargs or "wss://stream" in str(args)
+        assert "rest_url" in kwargs or "https://api" in str(args)
+
+    def test_bybit_symbols_uppercase(self, monkeypatch):
+        """REQ-CLI-004: Symbols passed uppercase to Bybit (no .lower())."""
+        monkeypatch.setenv("TRADY_AI_ACTIVE_SYMBOLS", "BTCUSDT,ETHUSDT")
+        monkeypatch.setenv("TRADY_AI_DRY_RUN", "true")
+        get_settings.cache_clear()
+
+        from unittest.mock import patch
+
+        with patch("trady_ai.adapters.bybit.BybitAdapter"):
+            with patch("trady_ai.paper_trading.session.PaperTradingSession") as mock_pts:
+                mock_session = mock_pts.return_value
+                mock_report = mock_session.run_session.return_value
+                mock_report.event_count = 0
+                mock_report.trade_count = 0
+                mock_report.stage_timestamps = {}
+                mock_report.market_ids = ["BTCUSDT", "ETHUSDT"]
+                mock_report.reflection_report_id = None
+                mock_report.calibration_state = "not_ready"
+                mock_report.contract_results = []
+
+                runner = CliRunner()
+                result = runner.invoke(cli, [
+                    "paper-trade", "session",
+                    "--domain", "BYBIT-SPOT",
+                    "--non-interactive",
+                    "--duration", "1",
+                ])
+
+        assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"
+        # Verify market_ids passed to run_session are uppercase (no .lower())
+        mock_session.run_session.assert_called_once()
+        call_kwargs = mock_session.run_session.call_args[1]
+        assert call_kwargs["market_ids"] == ["BTCUSDT", "ETHUSDT"]
+
+    def test_bybit_empty_symbols_exits_1(self, monkeypatch):
+        """REQ-CLI-004: No symbols configured → exit 1."""
+        monkeypatch.setenv("TRADY_AI_ACTIVE_SYMBOLS", "")
+        monkeypatch.setenv("TRADY_AI_DRY_RUN", "true")
+        get_settings.cache_clear()
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "paper-trade", "session",
+            "--domain", "BYBIT-SPOT",
+            "--non-interactive",
+        ])
+
+        assert result.exit_code == 1
+        assert "No symbols" in result.output or "symbols" in result.output.lower()

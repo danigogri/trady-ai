@@ -572,5 +572,45 @@ class TestStaticDomainPass(unittest.TestCase):
         self.assertIn("BINANCE-SPOT", _mod._VALID_DOMAINS)
 
 
+class TestBybitStaticDomain(unittest.TestCase):
+    """Tests for BYBIT-SPOT static domain branch (REQ-SD-001, REQ-SD-005)."""
+
+    def test_bybit_spot_in_valid_domains(self):
+        """REQ-SD-005: BYBIT-SPOT is in _VALID_DOMAINS."""
+        self.assertIn("BYBIT-SPOT", _mod._VALID_DOMAINS)
+
+    def test_bybit_spot_triggers_static_mode(self):
+        """REQ-SD-001: BYBIT-SPOT → no HTTP calls, exit 0."""
+        with patch.object(_mod, "_load_env", return_value={
+            "TRADY_AI_ACTIVE_SYMBOLS": "BTCUSDT,ETHUSDT",
+            "TRADY_AI_DOMAIN": "BYBIT-SPOT",
+        }):
+            with patch.object(_mod, "_write_env") as mock_write:
+                from unittest.mock import PropertyMock
+
+                # Ensure no HTTP calls are made
+                exit_code = _mod.main()
+
+        self.assertEqual(exit_code, 0)
+        mock_write.assert_not_called()
+
+    def test_bybit_spot_empty_symbols_exits_1(self):
+        """REQ-SD-001: BYBIT-SPOT with empty symbols → exit 1."""
+        with patch.object(_mod, "_load_env", return_value={
+            "TRADY_AI_ACTIVE_SYMBOLS": "",
+            "TRADY_AI_DOMAIN": "BYBIT-SPOT",
+        }):
+            exit_code = _mod.main()
+        self.assertEqual(exit_code, 1)
+
+    def test_bybit_spot_unset_symbols_exits_1(self):
+        """REQ-SD-001: BYBIT-SPOT with no ACTIVE_SYMBOLS → exit 1."""
+        with patch.object(_mod, "_load_env", return_value={
+            "TRADY_AI_DOMAIN": "BYBIT-SPOT",
+        }):
+            exit_code = _mod.main()
+        self.assertEqual(exit_code, 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

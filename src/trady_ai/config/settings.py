@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # Binance connection (testnet defaults)
     binance_ws_url: str = "wss://testnet.binance.vision/ws"
     binance_rest_url: str = "https://testnet.binance.vision"
+
+    # Bybit connection (testnet defaults)
+    bybit_ws_url: str = "wss://stream-testnet.bybit.com/v5/public/spot"
+    bybit_rest_url: str = "https://api-testnet.bybit.com"
+
     active_symbols: str = ""  # Comma-separated trading pairs: "BTCUSDT,ETHUSDT"
 
     # Market configuration

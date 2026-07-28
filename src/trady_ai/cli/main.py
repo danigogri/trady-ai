@@ -412,7 +412,7 @@ def paper_trade() -> None:
     pass
 
 
-_VALID_DOMAIN_SET = {"FOOTBALL-WINNER", "CRYPTO-BINARY", "BINANCE-SPOT"}
+_VALID_DOMAIN_SET = {"FOOTBALL-WINNER", "CRYPTO-BINARY", "BINANCE-SPOT", "BYBIT-SPOT"}
 
 
 @paper_trade.command()
@@ -455,6 +455,22 @@ def session(scope: str, domain: str, markets: tuple[str, ...], non_interactive: 
             rest_url=settings.binance_rest_url,
         )
         market_ids = [s.lower() for s in symbols]
+    elif domain == "BYBIT-SPOT":
+        from trady_ai.adapters.bybit import BybitAdapter
+
+        symbols = list(markets) if markets else settings.get_active_symbols()
+        if not symbols:
+            click.echo(
+                "No symbols configured. Set TRADY_AI_ACTIVE_SYMBOLS in .env or use --markets.",
+                err=True,
+            )
+            raise SystemExit(1)
+
+        adapter = BybitAdapter(
+            ws_url=settings.bybit_ws_url,
+            rest_url=settings.bybit_rest_url,
+        )
+        market_ids = list(symbols)  # UPPERCASE, no .lower()
     else:
         market_ids = list(markets) if markets else settings.get_active_market_ids()
         if not market_ids:

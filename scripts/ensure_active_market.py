@@ -178,7 +178,7 @@ def _write_env(env_path: str, updates: dict[str, str]) -> None:
 
 # ── Discovery config (externalized per BL-029, AD-5) ─────────────────────
 
-_VALID_DOMAINS = {"FOOTBALL-WINNER", "CRYPTO-BINARY", "BINANCE-SPOT"}
+_VALID_DOMAINS = {"FOOTBALL-WINNER", "CRYPTO-BINARY", "BINANCE-SPOT", "BYBIT-SPOT"}
 _DOMAIN_LEGACY_VARS = {"TRADY_AI_FOOTBALL_LEAGUES", "TRADY_AI_WINNER_PATTERN"}
 
 
@@ -531,8 +531,8 @@ def main() -> int:
     domain: str = config["domain"]
     tag_slug: str | None = config["tag_slug"]
 
-    # ── Static domain: BINANCE-SPOT (no discovery, no HTTP) ─────────────
-    if domain == "BINANCE-SPOT":
+    # ── Static domain: BINANCE-SPOT or BYBIT-SPOT (no discovery, no HTTP) ──
+    if domain == "BINANCE-SPOT" or domain == "BYBIT-SPOT":
         return _static_domain_pass(env)
 
     if not current_ids:

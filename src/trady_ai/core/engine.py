@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import sqlite_utils
 import structlog
@@ -18,7 +18,9 @@ from trady_ai.core.position_manager import PositionManager
 from trady_ai.core.risk import RiskEnforcer
 from trady_ai.core.signal_strategy import SignalStrategy
 from trady_ai.core.state import MarketStateTracker
-from trady_ai.strategies.markov.state_generator import StateGenerator
+
+if TYPE_CHECKING:
+    from trady_ai.strategies.markov.state_generator import StateGenerator
 
 logger = structlog.get_logger()
 
@@ -56,7 +58,7 @@ class ExecutionEngine:
         config: RuntimeConfig,
         db: sqlite_utils.Database,
         dry_run: bool = True,
-        state_generator: StateGenerator | None = None,
+        state_generator: "StateGenerator | None" = None,
     ):
         self._config = config
         self._db = db

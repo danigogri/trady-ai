@@ -78,20 +78,17 @@ class BinanceAdapter:
         async def _producer() -> None:
             """Connect to WS, subscribe, read messages, feed queue."""
             try:
-                async with websockets.connect(self._ws_url) as ws:
-                    subscribe_msg = json.dumps({
-                        "method": "SUBSCRIBE",
-                        "params": [f"{s.lower()}@trade" for s in symbols],
-                        "id": 1,
-                    })
-                    await ws.send(subscribe_msg)
-
+                streams = "/".join(f"{s.lower()}@trade" for s in symbols)
+                url = f"{self._ws_url}/stream?streams={streams}"
+                async with websockets.connect(url) as ws:
                     async for message in ws:
                         try:
-                            data = json.loads(message)
+                            raw = json.loads(message)
                         except (json.JSONDecodeError, ValueError):
                             logger.warning("non_json_message_skipped", raw=message[:200])
                             continue
+                        # Binance combined streams wrap events in {"stream": ..., "data": {...}}
+                        data = raw.get("data", raw) if isinstance(raw, dict) else raw
                         if isinstance(data, dict):
                             await queue.put(data)
             except websockets.ConnectionClosed:
