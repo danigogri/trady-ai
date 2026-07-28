@@ -562,7 +562,7 @@ class EventCapture:
         """
         market_input = self._adapter.market_to_input(raw_event)
         event_id = (
-            f"{raw_event['market_id']}:{raw_event['timestamp']}"
+            f"{market_input.market_id}:{market_input.timestamp.isoformat()}"
             f":{raw_event.get('event_type', 'tick')}"
         )
         event_dict = {
