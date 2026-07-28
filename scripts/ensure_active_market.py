@@ -178,7 +178,7 @@ def _write_env(env_path: str, updates: dict[str, str]) -> None:
 
 # ── Discovery config (externalized per BL-029, AD-5) ─────────────────────
 
-_VALID_DOMAINS = {"FOOTBALL-WINNER", "CRYPTO-BINARY"}
+_VALID_DOMAINS = {"FOOTBALL-WINNER", "CRYPTO-BINARY", "BINANCE-SPOT"}
 _DOMAIN_LEGACY_VARS = {"TRADY_AI_FOOTBALL_LEAGUES", "TRADY_AI_WINNER_PATTERN"}
 
 
@@ -462,6 +462,49 @@ def _find_eligible_market(
     return None
 
 
+# ── Static domain validation (BINANCE-SPOT) ──────────────────────────────
+
+
+def _static_domain_pass(env: dict[str, str]) -> int:
+    """Validate TRADY_AI_ACTIVE_SYMBOLS for BINANCE-SPOT domain.
+
+    Stateless guard: no HTTP calls, no .env writes. Exits 0 on valid symbols,
+    1 on empty or invalid format.
+
+    Args:
+        env: Loaded .env dict.
+
+    Returns:
+        0 if symbols are valid, 1 otherwise.
+    """
+    raw = env.get("TRADY_AI_ACTIVE_SYMBOLS", "").strip()
+    if not raw:
+        logger.error("active_symbols_required", extra={"domain": "BINANCE-SPOT"})
+        return 1
+
+    symbols = [s.strip() for s in raw.split(",") if s.strip()]
+    if not symbols:
+        logger.error("active_symbols_required", extra={"domain": "BINANCE-SPOT"})
+        return 1
+
+    for sym in symbols:
+        if sym != sym.upper():
+            logger.error(
+                "invalid_symbol_case",
+                extra={"symbol": sym, "domain": "BINANCE-SPOT"},
+            )
+            return 1
+        if not sym.isalnum():
+            logger.error(
+                "invalid_symbol_chars",
+                extra={"symbol": sym, "domain": "BINANCE-SPOT"},
+            )
+            return 1
+
+    logger.info("static_domain_valid", extra={"symbols": symbols})
+    return 0
+
+
 # ── Main ─────────────────────────────────────────────────────────────────
 
 
@@ -487,6 +530,10 @@ def main() -> int:
     reject_patterns: list[re.Pattern[str]] = config["reject_patterns"]
     domain: str = config["domain"]
     tag_slug: str | None = config["tag_slug"]
+
+    # ── Static domain: BINANCE-SPOT (no discovery, no HTTP) ─────────────
+    if domain == "BINANCE-SPOT":
+        return _static_domain_pass(env)
 
     if not current_ids:
         logger.info("no_markets_configured_attempting_discovery")

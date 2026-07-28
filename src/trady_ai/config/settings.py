@@ -35,8 +35,23 @@ class Settings(BaseSettings):
     polymarket_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     polymarket_rest_url: str = "https://clob.polymarket.com"
 
+    # Binance connection (testnet defaults)
+    binance_ws_url: str = "wss://testnet.binance.vision/ws"
+    binance_rest_url: str = "https://testnet.binance.vision"
+    active_symbols: str = ""  # Comma-separated trading pairs: "BTCUSDT,ETHUSDT"
+
     # Market configuration
     active_markets: str = ""  # Comma-separated Condition IDs: "0x123,0x456"
+
+    def get_active_symbols(self) -> list[str]:
+        """Parse active_symbols into list of trading pair strings.
+
+        Returns:
+            list[str]: Stripped, non-empty symbols. Empty list if active_symbols is "".
+        """
+        if not self.active_symbols:
+            return []
+        return [s.strip() for s in self.active_symbols.split(",") if s.strip()]
 
     def get_active_market_ids(self) -> list[str]:
         """Parse active_markets into list of Condition IDs.

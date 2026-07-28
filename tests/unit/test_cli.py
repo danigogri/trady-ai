@@ -165,8 +165,8 @@ class TestPaperTradeCLI:
         get_settings.cache_clear()
 
         # Seed some reflection reports
-        from trady_ai.db.database import init_db
         from trady_ai.core.persistence import init_core_tables
+        from trady_ai.db.database import init_db
 
         db = init_db(db_path)
         init_core_tables(db)
@@ -192,8 +192,8 @@ class TestPaperTradeCLI:
         monkeypatch.setenv("TRADY_AI_DB_PATH", str(db_path))
         get_settings.cache_clear()
 
-        from trady_ai.db.database import init_db
         from trady_ai.core.persistence import init_core_tables
+        from trady_ai.db.database import init_db
 
         db = init_db(db_path)
         init_core_tables(db)
@@ -233,8 +233,8 @@ class TestPaperTradeCLI:
         monkeypatch.setenv("TRADY_AI_DB_PATH", str(db_path))
         get_settings.cache_clear()
 
-        from trady_ai.db.database import init_db
         from trady_ai.core.persistence import init_core_tables
+        from trady_ai.db.database import init_db
 
         db = init_db(db_path)
         init_core_tables(db)
@@ -243,3 +243,138 @@ class TestPaperTradeCLI:
         runner = CliRunner()
         result = runner.invoke(cli, ["paper-trade", "bundle", "--day", "99"])
         assert result.exit_code != 0
+
+    # ── BINANCE-SPOT domain tests (REQ-CLI-001 through REQ-CLI-004) ──────────
+
+    def test_domain_binance_spot_accepted(self, monkeypatch):
+        """REQ-CLI-001: --domain BINANCE-SPOT accepted."""
+        monkeypatch.setenv("TRADY_AI_ACTIVE_SYMBOLS", "BTCUSDT")
+        monkeypatch.setenv("TRADY_AI_DRY_RUN", "true")
+        get_settings.cache_clear()
+
+        from unittest.mock import patch
+
+        with patch("trady_ai.paper_trading.session.PaperTradingSession") as mock_pts:
+            mock_session = mock_pts.return_value
+            mock_report = mock_session.run_session.return_value
+            mock_report.event_count = 0
+            mock_report.trade_count = 0
+            mock_report.stage_timestamps = {}
+            mock_report.market_ids = []
+            mock_report.reflection_report_id = None
+            mock_report.calibration_state = "not_ready"
+            mock_report.contract_results = []
+
+            runner = CliRunner()
+            result = runner.invoke(cli, [
+                "paper-trade", "session",
+                "--domain", "BINANCE-SPOT",
+                "--markets", "BTCUSDT",
+                "--non-interactive",
+                "--duration", "1",
+            ])
+
+        assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"
+
+    def test_domain_unknown_rejected_with_message(self, monkeypatch):
+        """REQ-CLI-003: Unknown domain prints valid options and exits 1."""
+        monkeypatch.setenv("TRADY_AI_ACTIVE_MARKETS", "0x123")
+        monkeypatch.setenv("TRADY_AI_DRY_RUN", "true")
+        get_settings.cache_clear()
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "paper-trade", "session",
+            "--domain", "NONSENSE",
+            "--markets", "0xabc",
+        ])
+
+        assert result.exit_code == 1
+        assert "Unknown domain" in result.output
+        assert "NONSENSE" in result.output
+        assert "BINANCE-SPOT" in result.output
+
+    def test_binance_adapter_selection(self, monkeypatch):
+        """REQ-CLI-002: BINANCE-SPOT → BinanceAdapter with ws/rest URLs."""
+        monkeypatch.setenv("TRADY_AI_ACTIVE_SYMBOLS", "BTCUSDT")
+        monkeypatch.setenv("TRADY_AI_DRY_RUN", "true")
+        get_settings.cache_clear()
+
+        from unittest.mock import patch
+
+        with patch("trady_ai.adapters.binance.BinanceAdapter") as mock_ba:
+            with patch("trady_ai.paper_trading.session.PaperTradingSession") as mock_pts:
+                mock_session = mock_pts.return_value
+                mock_report = mock_session.run_session.return_value
+                mock_report.event_count = 0
+                mock_report.trade_count = 0
+                mock_report.stage_timestamps = {}
+                mock_report.market_ids = []
+                mock_report.reflection_report_id = None
+                mock_report.calibration_state = "not_ready"
+                mock_report.contract_results = []
+
+                runner = CliRunner()
+                result = runner.invoke(cli, [
+                    "paper-trade", "session",
+                    "--domain", "BINANCE-SPOT",
+                    "--markets", "BTCUSDT",
+                    "--non-interactive",
+                    "--duration", "1",
+                ])
+
+        assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"
+        mock_ba.assert_called_once()
+        args, kwargs = mock_ba.call_args
+        assert "ws_url" in kwargs or "wss://testnet" in str(args)
+        assert "rest_url" in kwargs or "https://testnet" in str(args)
+
+    def test_binance_symbols_lowercased(self, monkeypatch):
+        """REQ-CLI-004: Symbols lowercased before passing to adapter."""
+        monkeypatch.setenv("TRADY_AI_ACTIVE_SYMBOLS", "BTCUSDT,ETHUSDT")
+        monkeypatch.setenv("TRADY_AI_DRY_RUN", "true")
+        get_settings.cache_clear()
+
+        from unittest.mock import patch
+
+        with patch("trady_ai.adapters.binance.BinanceAdapter"):
+            with patch("trady_ai.paper_trading.session.PaperTradingSession") as mock_pts:
+                mock_session = mock_pts.return_value
+                mock_report = mock_session.run_session.return_value
+                mock_report.event_count = 0
+                mock_report.trade_count = 0
+                mock_report.stage_timestamps = {}
+                mock_report.market_ids = ["btcusdt", "ethusdt"]
+                mock_report.reflection_report_id = None
+                mock_report.calibration_state = "not_ready"
+                mock_report.contract_results = []
+
+                runner = CliRunner()
+                result = runner.invoke(cli, [
+                    "paper-trade", "session",
+                    "--domain", "BINANCE-SPOT",
+                    "--non-interactive",
+                    "--duration", "1",
+                ])
+
+        assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"
+        # Verify market_ids passed to run_session are lowercased
+        mock_session.run_session.assert_called_once()
+        call_kwargs = mock_session.run_session.call_args[1]
+        assert call_kwargs["market_ids"] == ["btcusdt", "ethusdt"]
+
+    def test_binance_empty_symbols_exits_1(self, monkeypatch):
+        """REQ-CLI-004: No symbols configured → exit 1."""
+        monkeypatch.setenv("TRADY_AI_ACTIVE_SYMBOLS", "")
+        monkeypatch.setenv("TRADY_AI_DRY_RUN", "true")
+        get_settings.cache_clear()
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "paper-trade", "session",
+            "--domain", "BINANCE-SPOT",
+            "--non-interactive",
+        ])
+
+        assert result.exit_code == 1
+        assert "No symbols" in result.output or "symbols" in result.output.lower()

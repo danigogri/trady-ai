@@ -507,5 +507,70 @@ class TestMainFlowRouting(unittest.TestCase):
         mock_write.assert_called_once()
 
 
+class TestStaticDomainPass(unittest.TestCase):
+    """Tests for BINANCE-SPOT static domain branch (REQ-SD-001 through REQ-SD-005)."""
+
+    def test_static_domain_pass(self):
+        """REQ-SD-003: Valid symbols → exit 0, .env not touched."""
+        with patch.object(_mod, "_load_env", return_value={
+            "TRADY_AI_ACTIVE_SYMBOLS": "BTCUSDT,ETHUSDT",
+            "TRADY_AI_DOMAIN": "BINANCE-SPOT",
+        }):
+            with patch.object(_mod, "_write_env") as mock_write:
+                exit_code = _mod.main()
+        self.assertEqual(exit_code, 0)
+        mock_write.assert_not_called()
+
+    def test_static_domain_empty(self):
+        """REQ-SD-004: Empty symbols → exit 1."""
+        with patch.object(_mod, "_load_env", return_value={
+            "TRADY_AI_ACTIVE_SYMBOLS": "",
+            "TRADY_AI_DOMAIN": "BINANCE-SPOT",
+        }):
+            exit_code = _mod.main()
+        self.assertEqual(exit_code, 1)
+
+    def test_static_domain_unset(self):
+        """REQ-SD-004: No TRADY_AI_ACTIVE_SYMBOLS → exit 1."""
+        with patch.object(_mod, "_load_env", return_value={
+            "TRADY_AI_DOMAIN": "BINANCE-SPOT",
+        }):
+            exit_code = _mod.main()
+        self.assertEqual(exit_code, 1)
+
+    def test_static_domain_lowercase_rejected(self):
+        """REQ-SD-002: Lowercase symbols are rejected."""
+        with patch.object(_mod, "_load_env", return_value={
+            "TRADY_AI_ACTIVE_SYMBOLS": "btcusdt,ethusdt",
+            "TRADY_AI_DOMAIN": "BINANCE-SPOT",
+        }):
+            exit_code = _mod.main()
+        self.assertEqual(exit_code, 1)
+
+    def test_static_domain_invalid_chars_rejected(self):
+        """REQ-SD-002: Invalid characters rejected."""
+        with patch.object(_mod, "_load_env", return_value={
+            "TRADY_AI_ACTIVE_SYMBOLS": "BTC-USDT,ETH*USDT",
+            "TRADY_AI_DOMAIN": "BINANCE-SPOT",
+        }):
+            exit_code = _mod.main()
+        self.assertEqual(exit_code, 1)
+
+    def test_static_domain_with_whitespace(self):
+        """REQ-SD-002: Whitespace stripped but symbols still valid."""
+        with patch.object(_mod, "_load_env", return_value={
+            "TRADY_AI_ACTIVE_SYMBOLS": " BTCUSDT , ETHUSDT ",
+            "TRADY_AI_DOMAIN": "BINANCE-SPOT",
+        }):
+            with patch.object(_mod, "_write_env") as mock_write:
+                exit_code = _mod.main()
+        self.assertEqual(exit_code, 0)
+        mock_write.assert_not_called()
+
+    def test_valid_domains_includes_binance_spot(self):
+        """REQ-SD-005: BINANCE-SPOT is in _VALID_DOMAINS."""
+        self.assertIn("BINANCE-SPOT", _mod._VALID_DOMAINS)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

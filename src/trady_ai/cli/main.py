@@ -412,10 +412,13 @@ def paper_trade() -> None:
     pass
 
 
+_VALID_DOMAIN_SET = {"FOOTBALL-WINNER", "CRYPTO-BINARY", "BINANCE-SPOT"}
+
+
 @paper_trade.command()
 @click.option("--scope", default="daily", help="Time scope (default: daily)")
 @click.option("--domain", required=True, help="Market domain (e.g. PM-5M)")
-@click.option("--markets", multiple=True, help="Market condition IDs")
+@click.option("--markets", multiple=True, help="Market condition IDs or symbols")
 @click.option("--non-interactive", is_flag=True, default=False, help="Timed capture without prompts")
 @click.option("--duration", default=60, type=int, help="Capture window in seconds (default: 60)")
 def session(scope: str, domain: str, markets: tuple[str, ...], non_interactive: bool, duration: int) -> None:
@@ -423,22 +426,46 @@ def session(scope: str, domain: str, markets: tuple[str, ...], non_interactive: 
     from trady_ai.config import get_settings
     from trady_ai.db.database import get_db
 
+    # Validate domain early — fail fast on unknown domains
+    if domain not in _VALID_DOMAIN_SET:
+        valid_list = ", ".join(sorted(_VALID_DOMAIN_SET))
+        click.echo(f"Unknown domain: {domain}. Valid domains: {valid_list}", err=True)
+        raise SystemExit(1)
+
     settings = get_settings()
     db = get_db(settings)
 
     from trady_ai.adapters.polymarket import PolymarketAdapter
     from trady_ai.paper_trading.session import PaperTradingSession
 
-    market_ids = list(markets) if markets else settings.get_active_market_ids()
-    if not market_ids:
-        click.echo("No markets specified. Use --markets or configure active_markets in settings.")
-        return
+    adapter: Any
+    if domain == "BINANCE-SPOT":
+        from trady_ai.adapters.binance import BinanceAdapter
 
-    adapter = PolymarketAdapter(
-        rest_url=settings.polymarket_rest_url,
-        ws_url=settings.polymarket_ws_url,
-        api_key=settings.polymarket_api_key,
-    )
+        symbols = list(markets) if markets else settings.get_active_symbols()
+        if not symbols:
+            click.echo(
+                "No symbols configured. Set TRADY_AI_ACTIVE_SYMBOLS in .env or use --markets.",
+                err=True,
+            )
+            raise SystemExit(1)
+
+        adapter = BinanceAdapter(
+            ws_url=settings.binance_ws_url,
+            rest_url=settings.binance_rest_url,
+        )
+        market_ids = [s.lower() for s in symbols]
+    else:
+        market_ids = list(markets) if markets else settings.get_active_market_ids()
+        if not market_ids:
+            click.echo("No markets specified. Use --markets or configure active_markets in settings.")
+            return
+
+        adapter = PolymarketAdapter(
+            rest_url=settings.polymarket_rest_url,
+            ws_url=settings.polymarket_ws_url,
+            api_key=settings.polymarket_api_key,
+        )
     paper_session = PaperTradingSession(db, adapter=adapter)
     report = paper_session.run_session(
         scope=scope,

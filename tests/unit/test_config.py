@@ -53,3 +53,68 @@ def test_settings_frozen():
     settings = Settings()
     with pytest.raises((TypeError, ValidationError)):
         settings.dry_run = False
+
+
+# ── Binance settings (REQ-BC-001 through REQ-BC-005) ─────────────────────────
+
+
+def test_binance_settings_defaults():
+    """REQ-BC-001/002: Default WS/REST URLs are Binance testnet."""
+    settings = Settings()
+    assert settings.binance_ws_url == "wss://testnet.binance.vision/ws"
+    assert settings.binance_rest_url == "https://testnet.binance.vision"
+
+
+def test_binance_settings_override(monkeypatch):
+    """REQ-BC-001/002: Explicit env vars override defaults."""
+    monkeypatch.setenv("TRADY_AI_BINANCE_WS_URL", "wss://stream.binance.com:9443/ws")
+    monkeypatch.setenv("TRADY_AI_BINANCE_REST_URL", "https://api.binance.com")
+    settings = Settings()
+    assert settings.binance_ws_url == "wss://stream.binance.com:9443/ws"
+    assert settings.binance_rest_url == "https://api.binance.com"
+
+
+def test_binance_active_symbols_default_empty():
+    """REQ-BC-003: active_symbols defaults to empty string."""
+    settings = Settings()
+    assert settings.active_symbols == ""
+
+
+def test_binance_get_active_symbols_multiple(monkeypatch):
+    """REQ-BC-003: Comma-separated symbols parsed correctly."""
+    monkeypatch.setenv("TRADY_AI_ACTIVE_SYMBOLS", "BTCUSDT,ETHUSDT,BNBUSDT")
+    settings = Settings()
+    result = settings.get_active_symbols()
+    assert result == ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
+
+
+def test_binance_get_active_symbols_whitespace(monkeypatch):
+    """REQ-BC-003: Whitespace around symbols is stripped."""
+    monkeypatch.setenv("TRADY_AI_ACTIVE_SYMBOLS", " BTCUSDT , ETHUSDT ")
+    settings = Settings()
+    result = settings.get_active_symbols()
+    assert result == ["BTCUSDT", "ETHUSDT"]
+
+
+def test_binance_get_active_symbols_empty():
+    """REQ-BC-003: No TRADY_AI_ACTIVE_SYMBOLS → empty list."""
+    settings = Settings()
+    assert settings.get_active_symbols() == []
+
+
+def test_binance_get_active_symbols_empty_after_set(monkeypatch):
+    """REQ-BC-003: Empty string after set → empty list."""
+    monkeypatch.setenv("TRADY_AI_ACTIVE_SYMBOLS", "")
+    settings = Settings()
+    assert settings.get_active_symbols() == []
+
+
+def test_binance_settings_frozen(monkeypatch):
+    """REQ-BC-005: Binance settings are immutable."""
+    settings = Settings()
+    with pytest.raises((TypeError, ValidationError)):
+        settings.binance_ws_url = "changed"
+    with pytest.raises((TypeError, ValidationError)):
+        settings.binance_rest_url = "changed"
+    with pytest.raises((TypeError, ValidationError)):
+        settings.active_symbols = "changed"

@@ -1,0 +1,50 @@
+schema: spec-driven
+
+context: |
+  Project: Portable OS general — a governance framework (pure markdown, no code).
+  Stack: Markdown governance documents (Constitution, Operations Manual, SDD Cycle Governance, Git Workflux, Backlog Protocol).
+  Architecture: Hierarchical authority model — Constitution (immutable principles) → Operations Manual (adaptable procedures) → SDD Cycle Governance (lifecycle rules) → Git Workflux (version control) → Backlog Protocol (issue tracking).
+  Testing: Not applicable — no executable code in this project.
+  Style: Markdown with structured sections, tables, and RFC-style principle numbering (A1-A8, B1-B6, C1-C5).
+
+strict_tdd: false
+
+testing:
+  runner: none
+  layers:
+    unit: false
+    integration: false
+    e2e: false
+  coverage: false
+  quality:
+    linter: false
+    type_checker: false
+    formatter: false
+
+rules:
+  proposal:
+    - Reference the Constitution principle(s) the change builds upon or extends
+    - Include authority level and derivation chain
+    - Verify no duplication with existing governance documents (A6 — Governance Minimalism)
+  specs:
+    - Use Given/When/Then for scenarios where applicable
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Each requirement must trace to a Constitution principle
+  design:
+    - Document authority level of new artifacts
+    - Show derivation chain from Constitution
+    - Include impact analysis on existing documents
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    - Follow existing markdown patterns and section numbering
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
+    - Verify authority chain consistency after merge
