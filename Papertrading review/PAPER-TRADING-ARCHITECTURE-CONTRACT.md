@@ -1171,9 +1171,12 @@ These are the implementation items required before the 30-day experiment can beg
                                                               
      This architecture is FROZEN effective immediately.       
                                                               
-     Status:   FROZEN                                         
-     Version:  1.0                                            
-     Date:     Prior to Day 0 of 30-day campaign              
+      Status:   FROZEN                                         
+      Version:  2.0                                            
+      Date:     Prior to Day 0 of 30-day campaign              
+      Last amended: 2026-07-27 (v1.0→v2.0: multi-domain        
+                    support, documented deviations,             
+                    Binance platform integration)
                                                               
      The Paper Trading operational architecture is            
      considered conceptually complete and internally          
@@ -1206,4 +1209,70 @@ These are the implementation items required before the 30-day experiment can beg
 
 ---
 
-**End of Paper Trading Architecture Contract v1.0**
+## 28. Amendment Log
+
+| Version | Date | Sections Changed | Description |
+|---------|------|-----------------|-------------|
+| **1.0 → 2.0** | 2026-07-27 | §27 (Freeze), +§28 (Amendment Log), +§29 (Documented Deviations), +§30 (Multi-Domain Architecture) | Formalize BL-027 (OC-2 discovery deviation), BL-028 (multi-domain support), Binance platform integration. Three SDD cycles validated (calibration-framework, guard-script-domain-agnostic, binance-adapter). |
+
+## 29. Documented Deviations & Errata
+
+### D-001: OC-2 Market Discovery Mechanism (BL-027)
+
+**Original contract (OC-2, §2):** Discovery via single `clob.polymarket.com/markets` endpoint with tag filter `["football", "winner"]`.
+
+**Operational reality (2026-07-22):** `clob.polymarket.com/markets` returns `tags=["All"]` for all markets — tag-based filtering is non-functional. Sports markets are only reachable via `polymarket.com/sports/{league}/games` (HTML scraping) → slug extraction → `gamma-api/events?slug={slug}` → condition ID extraction → CLOB verification.
+
+**Impact:** 3-endpoint flow replaces single-endpoint flow. No functional impact on eligibility rules (regex on question field remains deterministic). Documented in `scripts/ensure_active_market.py` docstring, `paper_trading/SESSION-2026-07-22.md`, and `paper_trading/MARKET-DISCOVERY-FIX.md`.
+
+**Status:** ACCEPTED. Guard script validated with 50 tests (2026-07-22). This deviation is a platform limitation, not an architectural choice.
+
+### D-002: Multi-Platform Architecture (BL-028)
+
+**Original contract (v1.0):** Single platform (Polymarket), single domain (FOOTBALL-WINNER).
+
+**Operational reality (2026-07-27):** System supports three domains across two platforms:
+- FOOTBALL-WINNER → Polymarket (league-based HTML scraping)
+- CRYPTO-BINARY → Polymarket (tag-based gamma API)
+- BINANCE-SPOT → Binance (static symbol configuration, no discovery)
+
+**Impact:** Guard script is domain-agnostic (refactored 2026-07-27, SDD cycle). Adapter layer supports multiple platforms via identical contract (`subscribe_websocket` + `market_to_input`). Core engine is unchanged. Calibration framework is domain-agnostic.
+
+**Status:** ACCEPTED. See §30 for multi-domain architecture specification.
+
+## 30. Multi-Domain & Multi-Platform Architecture (v2.0)
+
+### 30.1 Supported Domains
+
+| Domain | Platform | Discovery Strategy | Active Markets Config |
+|--------|----------|-------------------|----------------------|
+| `FOOTBALL-WINNER` | Polymarket | League-based HTML scraping | `TRADY_AI_FOOTBALL_LEAGUES`, `TRADY_AI_QUESTION_PATTERN` (legacy) |
+| `CRYPTO-BINARY` | Polymarket | Tag-based gamma API (`/events?tag_slug=`) | `TRADY_AI_DISCOVERY_TAG_SLUG`, `TRADY_AI_QUESTION_PATTERN` |
+| `BINANCE-SPOT` | Binance | Static (no discovery) | `TRADY_AI_ACTIVE_SYMBOLS` |
+
+### 30.2 Platform Adapter Contract
+
+All platform adapters MUST implement:
+```python
+class Adapter:
+    def subscribe_websocket(self, ids: list[str]) -> Generator[dict, None, None]: ...
+    @staticmethod
+    def market_to_input(raw: dict) -> MarketInput: ...
+```
+
+Adapters translate platform-specific data → domain-agnostic `MarketInput`. The core engine, calibration framework, and execution pipeline are platform-independent.
+
+### 30.3 Domain Configuration
+
+Domain selection is via `TRADY_AI_DOMAIN` env var. Valid values: `FOOTBALL-WINNER`, `CRYPTO-BINARY`, `BINANCE-SPOT`. Unknown values cause the guard script to exit with error listing valid domains.
+
+### 30.4 Platform-Specific Configuration
+
+| Platform | Required Env Vars |
+|----------|------------------|
+| Polymarket | `TRADY_AI_POLYMARKET_REST_URL`, `TRADY_AI_POLYMARKET_WS_URL` |
+| Binance | `BINANCE_WS_URL`, `BINANCE_REST_URL`, `TRADY_AI_ACTIVE_SYMBOLS` |
+
+---
+
+**End of Paper Trading Architecture Contract v2.0**
