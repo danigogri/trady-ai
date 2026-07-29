@@ -11,6 +11,7 @@ defaults to ``DirectionalStateGenerator(3)`` for backward compatibility.
 """
 
 import json
+import warnings
 from decimal import Decimal
 from typing import Any
 
@@ -157,31 +158,29 @@ class MarkovPersistenceEngine(StrategyBase):
 
     # ── persistence: snapshot / restore ──────────────────────────────
 
-    def snapshot(self, domain: str, db: sqlite_utils.Database) -> None:
+    def snapshot(self, domain: str, db: sqlite_utils.Database) -> dict[str, Any]:
         """Persist current strategy state to the strategy_snapshots table.
 
-        Delegates to on_snapshot() for serializable state, then calls
-        persist_strategy_snapshot() to write to SQLite.
+        .. deprecated::
+            Use ``on_snapshot()`` instead. This method emits a
+            ``DeprecationWarning`` and returns the snapshot data dict
+            without writing to the database. Snapshot persistence is
+            now handled by the execution engine and reflection engine.
 
         Args:
             domain: Execution domain (set by registry).
             db:   sqlite-utils Database instance.
-        """
-        from trady_ai.core.persistence import persist_strategy_snapshot
 
-        snap = self.on_snapshot()
-        persist_strategy_snapshot(
-            db=db,
-            domain=domain,
-            strategy_name=self.name,
-            tick_number=snap["total_obs"],
-            transition_counts=snap["transition_counts"],
-            state_counts=snap["state_counts"],
-            warmup_ticks=snap["warmup_ticks"],
-            threshold_pct=str(snap["threshold_pct"]),
-            state_space_size=self._generator.state_count,
-            state_generator=self._generator.generator_name,
+        Returns:
+            dict[str, Any]: Snapshot data from ``on_snapshot()``.
+        """
+        warnings.warn(
+            "snapshot() is deprecated; use on_snapshot() instead. "
+            "Persistence is handled by the execution/reflection engine.",
+            DeprecationWarning,
+            stacklevel=2,
         )
+        return self.on_snapshot()
 
     @classmethod
     def restore(

@@ -153,3 +153,90 @@ class TestStateTrackerGetState:
         """get_state for unknown market_id → None."""
         tracker = MarketStateTracker()
         assert tracker.get_state("unknown-market") is None
+
+
+class TestStateTrackerATR:
+    """MarketStateTracker with ATR-based threshold (Tasks 1.3–1.4).
+
+    When ATR is available, τ = α × ATR / price replaces threshold_pct.
+    First tick is always NEUTRAL. Spike adapts within N ticks.
+    """
+
+    def test_first_tick_still_neutral_with_atr(self):
+        """First tick → NEUTRAL even with ATR configured."""
+        tracker = MarketStateTracker(alpha=2.0, atr_period=5)
+        result = tracker.update(_input(price="100.00"))
+        assert result.state == "NEUTRAL"
+
+    def test_steady_small_changes_are_neutral(self):
+        """With ATR, small changes inside τ → NEUTRAL."""
+        tracker = MarketStateTracker(alpha=2.0, atr_period=10)
+        # Fill buffer with 10 small steps
+        for i in range(10):
+            tracker.update(_input(price=str(100.00 + i * 0.01)))
+        # 11th tick with same small change
+        result = tracker.update(_input(price="100.10"))
+        # For period=10, ATR ≈ 0.01, τ ≈ 2×0.01/100.10 ≈ 0.0002
+        # change_pct = 0.01/100.09 ≈ 0.0001 < τ → NEUTRAL
+        assert result.state == "NEUTRAL"
+
+    def test_large_spike_exceeds_atr_threshold(self):
+        """A price spike significantly larger than recent ATR → UP."""
+        tracker = MarketStateTracker(alpha=2.0, atr_period=10)
+        # 10 steady ticks
+        for i in range(10):
+            tracker.update(_input(price=str(100.00 + i * 0.01)))
+        # Spike: +0.50 (much larger than 0.01 steps)
+        result = tracker.update(_input(price="100.60"))
+        # change_pct = 0.50/100.09 ≈ 0.005, τ ≈ 2×0.01/100.60 ≈ 0.0002
+        # 0.005 > 0.0002 → UP
+        assert result.state == "UP"
+
+    def test_spike_negative_exceeds_atr_threshold(self):
+        """A negative spike → DOWN."""
+        tracker = MarketStateTracker(alpha=2.0, atr_period=10)
+        for i in range(10):
+            tracker.update(_input(price=str(100.00 + i * 0.01)))
+        # Negative spike: -0.50
+        result = tracker.update(_input(price="99.60"))
+        assert result.state == "DOWN"
+
+    def test_spike_adapts_within_period(self):
+        """After a spike, τ grows; once spike drops from buffer, τ shrinks again."""
+        tracker = MarketStateTracker(alpha=2.0, atr_period=5)
+        # 5 steady ticks
+        for i in range(5):
+            tracker.update(_input(price=str(100.00 + i * 0.01)))
+        # Spike
+        tracker.update(_input(price="100.60"))  # → UP (spike)
+        # After spike, threshold is now elevated
+        result_after = tracker.update(_input(price="100.61"))  # small change after
+        assert result_after.state == "NEUTRAL"
+
+    def test_backward_compat_threshold_pct_only(self):
+        """Without ATR alpha/period, threshold_pct still works as before."""
+        tracker = MarketStateTracker(threshold_pct=0.001)
+        tracker.update(_input(price="100.00"))
+        result = tracker.update(_input(price="100.20"))  # +0.2% > 0.1%
+        assert result.state == "UP"
+
+    def test_backward_compat_threshold_pct_default(self):
+        """Default constructor (no args) behaves as before."""
+        tracker = MarketStateTracker()
+        tracker.update(_input(price="100.00"))
+        result = tracker.update(_input(price="100.05"))
+        assert result.state == "NEUTRAL"
+
+    def test_increasing_load_increases_threshold(self):
+        """Higher ATR from volatile data → wider threshold (less sensitive)."""
+        tracker = MarketStateTracker(alpha=2.0, atr_period=10)
+        # High-volatility data: 10 ticks with ±0.50 swings
+        prices = ["100.00", "100.50", "100.00", "100.50", "100.00",
+                   "100.50", "100.00", "100.50", "100.00", "100.50"]
+        for p in prices:
+            tracker.update(_input(price=p))
+        # Now a 0.20 change (large absolute but small relative to recent ATR)
+        result = tracker.update(_input(price="100.70"))
+        # Recent ATR ≈ 0.50, τ ≈ 2×0.50/100.70 ≈ 0.0099
+        # change_pct = 0.20/100.50 ≈ 0.002 < 0.0099 → NEUTRAL
+        assert result.state == "NEUTRAL"

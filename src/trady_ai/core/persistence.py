@@ -282,10 +282,18 @@ def init_strategy_tables(db: sqlite_utils.Database) -> None:
             state_space_size INTEGER NOT NULL DEFAULT 3,
             state_generator TEXT NOT NULL DEFAULT 'directional',
             snapshot_at TEXT NOT NULL,
+            created_by TEXT NOT NULL DEFAULT 'strategy',
             UNIQUE(strategy_name, domain, tick_number)
         )
         """
     )
+    # Migration: add created_by column for databases created before v2.1
+    cursor = db.execute("PRAGMA table_info(strategy_snapshots)")
+    col_names = {row[1] for row in cursor.fetchall()}  # row[1] = column name
+    if "created_by" not in col_names:
+        db.execute(
+            "ALTER TABLE strategy_snapshots ADD COLUMN created_by TEXT NOT NULL DEFAULT 'strategy'"
+        )
 
 
 def persist_strategy_snapshot(
@@ -299,6 +307,7 @@ def persist_strategy_snapshot(
     threshold_pct: str | float,
     state_space_size: int = 3,
     state_generator: str = "directional",
+    created_by: str = "strategy",
 ) -> None:
     """Insert or replace a strategy snapshot row.
 
@@ -317,6 +326,8 @@ def persist_strategy_snapshot(
         threshold_pct: Threshold as string or float.
         state_space_size: Number of states (default 3).
         state_generator: Generator name (default ``"directional"``).
+        created_by: Origin of the snapshot (default ``"strategy"``).
+            Set to ``"reflection_engine"`` when persisted via reflection.
     """
     db["strategy_snapshots"].insert(  # type: ignore[union-attr]
         {
@@ -330,6 +341,7 @@ def persist_strategy_snapshot(
             "state_space_size": state_space_size,
             "state_generator": state_generator,
             "snapshot_at": datetime.now(UTC).isoformat(),
+            "created_by": created_by,
         },
         pk="id",
         replace=True,

@@ -72,11 +72,23 @@ class EvidenceBundler:
         contracts_data = [_dataclass_to_dict(v) for v in report.contract_results]
         contracts_path.write_text(json.dumps(contracts_data, indent=2))
 
+        # ── Write strategy snapshot (if present) ─────────────────────────────
+        snapshot_path = session_dir / "strategy_snapshot.json"
+        has_snapshot = False
+        if report.strategy_snapshot is not None:
+            snapshot_path.write_text(
+                json.dumps(report.strategy_snapshot, indent=2, default=str)
+            )
+            has_snapshot = True
+
         # ── Compute SHA-256 checksums ────────────────────────────────────────
         checksums: dict[str, str] = {}
         for name in ["session_report.json", "contracts.json"]:
             content = (session_dir / name).read_bytes()
             checksums[name] = hashlib.sha256(content).hexdigest()
+        if has_snapshot:
+            snap_content = snapshot_path.read_bytes()
+            checksums["strategy_snapshot.json"] = hashlib.sha256(snap_content).hexdigest()
 
         # ── Write manifest ───────────────────────────────────────────────────
         manifest = SessionManifest(

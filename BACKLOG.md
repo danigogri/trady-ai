@@ -2,7 +2,7 @@
 
 > Generado desde BACKLOG-PROTOCOL v1
 > Auditoría inicial: 2026-07-09
-> Última actualización: 2026-07-28 (BL-032 — .env prefix Bybit VPS Singapur)
+> Última actualización: 2026-07-29 (BL-033 cerrado — fix-calendar-day-counter; BL-021 cerrado; VPS DB limpiada)
 
 ---
 
@@ -98,7 +98,7 @@ Se detectó un bug preexistente durante el triage: `init_db` en `db/database.py`
 
 [BL-020] | deuda | baja | paper-trading, contracts | **`dry_run_enforced("dry_run")` no llama a `validate_execution_secrets()`.** La implementación actual usa string comparison directo en `contracts.py:37` en vez de delegar a `security/polymarket.py:16`. Son funcionalmente equivalentes porque `validate_execution_secrets()` con `execution_mode="dry_run"` es un no-op (`return` inmediato en línea 29-30). El safety net real está en `ExecutionEngine(dry_run=True)` hardcodeado en `session.py:352`. La spec (REQ-PT-002, línea 37) referencia `validate_execution_secrets()` como mecanismo de validación, creando una discrepancia documental. Sin impacto operacional — corregir solo si cambia el contrato de seguridad o si se reutiliza `dry_run_enforced()` en modo live. | abierto
 
-[BL-021] | deuda | baja | paper-trading, session | **`_compute_day()` usa `COUNT(*)` en vez de `COUNT(DISTINCT DATE())`.** La query en `session.py:380` cuenta filas totales de `reflection_reports` en vez de días distintos. `temporal_integrity()` (`contracts.py:88`) previene sesiones duplicadas por día usando `datetime.now(UTC)`, así que en operación normal ambas queries son equivalentes. Impacto cosmético: si existieran múltiples reports el mismo día (por inserción manual o scope distinto), los directorios de bundle saltarían números (`dia-007/`, `dia-009/`). No afecta evidencia, replayabilidad, calibración, ni governance. Corregir si `temporal_integrity()` se relaja en el futuro. | abierto
+[BL-021] | deuda | baja | paper-trading, session | **`_compute_day()` usa `COUNT(*)` en vez de `COUNT(DISTINCT DATE())`.** La query en `session.py:380` cuenta filas totales de `reflection_reports` en vez de días distintos. `temporal_integrity()` (`contracts.py:88`) previene sesiones duplicadas por día usando `datetime.now(UTC)`, así que en operación normal ambas queries son equivalentes. Impacto cosmético: si existieran múltiples reports el mismo día (por inserción manual o scope distinto), los directorios de bundle saltarían números (`dia-007/`, `dia-009/`). No afecta evidencia, replayabilidad, calibración, ni governance. Corregir si `temporal_integrity()` se relaja en el futuro. | cerrado (reemplazado por fix-calendar-day-counter, commit 52d0c71 — BL-033) — 2026-07-28
 
 [BL-022] | deuda | baja | paper-trading, bundler | **`_count_today_events(day)` y `_count_today_trades(day)` ignoran el parámetro `day`.** `bundler.py:142-157` cuenta todos los eventos/trades sin filtrar por día. Limitación del schema actual: `event_store` no tiene columna `session_day`. El `session.py` `_count_events()` tiene el mismo comportamiento (cuenta total), así que el bundle regenerado es consistente con el original. Impacto: solo cosmético en `session_report.json` regenerado. No afecta Reflection, Calibration, ni Governance. Revisar post-Paper Trading cuando se agregue columna `session_day` al schema. | abierto
 
@@ -139,6 +139,10 @@ Se detectó un bug preexistente durante el triage: `init_db` en `db/database.py`
 ### Orden 6: BL-032 (config — detectado PRE-FLIGHT 2026-07-28)
 
 [BL-032] | deuda | baja | `/opt/trady/.env` (Singapore VPS) | **Variables de Bybit sin prefijo `TRADY_AI_` son ignoradas por Pydantic Settings.** El `.env` tiene `BYBIT_WS_URL=wss://stream-testnet.bybit.com/v5/public/spot` y `BYBIT_REST_URL=https://api-testnet.bybit.com` sin el prefijo requerido `TRADY_AI_`. Pydantic Settings (env_prefix=`TRADY_AI_`) las ignora y usa los defaults de `settings.py`, que casualmente son los mismos valores (testnet). Sin impacto operacional, pero es misleading: si se cambia a producción en el futuro sin corregir, los defaults testnet seguirían activos. Fix: renombrar a `TRADY_AI_BYBIT_WS_URL` y `TRADY_AI_BYBIT_REST_URL`. Detectado durante Phase 3 PRE-FLIGHT (2026-07-28). | abierto
+
+### Orden 7: BL-033 (CRITICAL — detectado Day 0 2026-07-28)
+
+[BL-033] | bug | crítica | src/trady_ai/paper_trading/session.py | **`_compute_day()` = session counter, no calendar day counter — false positive en experimento de 30 días.** Detectado por el operador a los 15 minutos de arrancar Day 0 (2026-07-28 18:30 UTC): "Day 3" y "Day 4" aparecieron en 15 minutos. Root cause: `_compute_day()` usaba `COUNT(*) FROM reflection_reports` — cada sesión de 15 min crea un report → 96 "días" por día real. `temporal_integrity()` había sido actualizado para permitir múltiples sesiones/día, pero `_compute_day()` quedó con la semántica de 1 sesión/día. | cerrado (fix-calendar-day-counter SDD cycle, commit 52d0c71: DAY_ZERO frozen + _compute_calendar_day() + _compute_session_number()). Forensic archive en paper_trading/archive/bug-session-counter-2026-07-28/. VPS DB limpiada 2026-07-29.
 
 ---
 

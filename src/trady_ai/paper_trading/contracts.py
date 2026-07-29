@@ -21,6 +21,11 @@ from trady_ai.paper_trading.models import ContractViolation
 # Defined by the Operational Isolation Contract (REQ-PT-003).
 _FORBIDDEN_IMPORTS = {"strategies", "intelligence", "governance"}
 
+# Function names that session.py MUST NOT import (direct persistence bypass).
+# Reflection must own all snapshot persistence; session delegates via
+# ReflectionEngine, never calls persist_strategy_snapshot directly.
+_FORBIDDEN_FUNCTIONS = {"persist_strategy_snapshot"}
+
 
 def _now_iso() -> str:
     """Return current UTC timestamp as ISO-8601 string."""
@@ -226,18 +231,34 @@ def validate_isolation_boundary(
                         )
                     )
         elif isinstance(node, ast.ImportFrom):
-            if node.module is not None and _check_forbidden(node.module):
-                violations.append(
-                    ContractViolation(
-                        contract_name="REFLECTION_ISOLATION",
-                        severity="CRITICAL",
-                        detail=(
-                            f"Import boundary violation: session.py "
-                            f"imports from '{node.module}'"
-                        ),
-                        timestamp=_now_iso(),
+            if node.module is not None:
+                if _check_forbidden(node.module):
+                    violations.append(
+                        ContractViolation(
+                            contract_name="REFLECTION_ISOLATION",
+                            severity="CRITICAL",
+                            detail=(
+                                f"Import boundary violation: session.py "
+                                f"imports from '{node.module}'"
+                            ),
+                            timestamp=_now_iso(),
+                        )
                     )
-                )
+                # Check individual imported names for forbidden functions
+                for alias in node.names:
+                    if alias.name in _FORBIDDEN_FUNCTIONS:
+                        violations.append(
+                            ContractViolation(
+                                contract_name="REFLECTION_ISOLATION",
+                                severity="CRITICAL",
+                                detail=(
+                                    f"Import boundary violation: session.py "
+                                    f"imports '{alias.name}' from "
+                                    f"'{node.module}'"
+                                ),
+                                timestamp=_now_iso(),
+                            )
+                        )
 
     return violations
 

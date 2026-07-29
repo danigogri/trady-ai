@@ -34,6 +34,7 @@ class ExecutionResult:
     signals: list[Signal] = field(default_factory=list)
     final_positions: list[Position] = field(default_factory=list)
     summary_stats: dict[str, Any] = field(default_factory=dict)
+    strategy_snapshot: dict[str, Any] | None = None
 
 
 class ExecutionEngine:
@@ -167,6 +168,9 @@ class ExecutionEngine:
         result.summary_stats = compute_summary(
             result.decisions, result.trades, result.final_positions
         )
+        # Populate strategy snapshot if strategy supports it
+        if hasattr(strategy, "on_snapshot"):
+            result.strategy_snapshot = strategy.on_snapshot()
         return result
 
     def run_from_store(self, strategy: SignalStrategy,

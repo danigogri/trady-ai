@@ -73,6 +73,7 @@ class ReflectionEngine:
         baseline_tick: int | None = None,
         comparison_tick: int | None = None,
         current_params: dict[str, float] | None = None,
+        execution_result: Any | None = None,
     ) -> ReflectionReport:
         """Execute the full reflection pipeline.
 
@@ -84,6 +85,9 @@ class ReflectionEngine:
             comparison_tick: Optional comparison snapshot tick.
             current_params: Optional current parameter values for proposal
                 generation.
+            execution_result: Optional ``ExecutionResult`` from the execution
+                engine. When provided, snapshot data is extracted and persisted
+                via ``persist_snapshot()`` after analysis, before report assembly.
 
         Returns:
             ReflectionReport: Complete report with all analysis results.
@@ -148,6 +152,10 @@ class ReflectionEngine:
                     }
             except Exception:
                 evidence_report_dict = {"error": "calibration analysis failed"}
+
+        # ── 5.6 Persist strategy snapshot from execution result ──────────
+        if execution_result is not None:
+            self.persist_snapshot(execution_result, domain=domain)
 
         # ── 6. Assemble report ───────────────────────────────────────────
         report = ReflectionReport(
@@ -239,3 +247,44 @@ class ReflectionEngine:
             return "ready_for_calibration"
 
         return "uncalibrated"
+
+    def persist_snapshot(
+        self, execution_result: Any, domain: str
+    ) -> None:
+        """Extract strategy snapshot from execution result and persist to DB.
+
+        Args:
+            execution_result: ``ExecutionResult`` containing optional
+                ``strategy_snapshot`` dict.
+            domain: Market domain (e.g. ``"PM-5M"``).
+
+        Raises:
+            ValueError: If the snapshot dict is missing required keys
+                (``transition_counts``).
+        """
+        snap = execution_result.strategy_snapshot
+        if snap is None:
+            return
+
+        required = ["transition_counts"]
+        missing = [k for k in required if k not in snap]
+        if missing:
+            raise ValueError(
+                f"Snapshot missing required keys: {missing}"
+            )
+
+        from trady_ai.core.persistence import persist_strategy_snapshot
+
+        persist_strategy_snapshot(
+            db=self._db,
+            domain=domain,
+            strategy_name=snap.get("strategy_name", "unknown"),
+            tick_number=snap.get("total_obs", 0),
+            transition_counts=snap["transition_counts"],
+            state_counts=snap.get("state_counts", []),
+            warmup_ticks=snap.get("warmup_ticks", 0),
+            threshold_pct=str(snap.get("threshold_pct", "0.001")),
+            state_space_size=snap.get("state_space_size", 3),
+            state_generator=snap.get("state_generator", "directional"),
+            created_by="reflection_engine",
+        )

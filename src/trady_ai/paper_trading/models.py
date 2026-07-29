@@ -67,6 +67,7 @@ class SessionReport:
     stage_timestamps: dict[str, str] = field(default_factory=dict)
     calibration_state: str = "not_ready"
     market_ids: list[str] = field(default_factory=list)
+    strategy_snapshot: dict[str, object] | None = None
 
 
 @dataclass

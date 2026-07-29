@@ -447,22 +447,48 @@ class TestVolatilityPersistence:
 
 
 class TestSnapshotRestore:
-    """MarkovPersistenceEngine.snapshot() and restore()."""
+    """MarkovPersistenceEngine.snapshot() deprecation and restore()."""
 
     def test_snapshot_persists_row(self, tmp_strategy_db):
-        """After snapshot, the DB has one row in strategy_snapshots."""
+        """on_snapshot() + persist_strategy_snapshot persists to DB."""
+        from trady_ai.core.persistence import persist_strategy_snapshot
+
         engine = MarkovPersistenceEngine(warmup_ticks=5)
         for label in ["UP", "UP", "DOWN", "UP"]:
             engine.update(_state("btc-usd", label))
-        engine.snapshot("PM-5M", tmp_strategy_db)
+        snap = engine.on_snapshot()
+        persist_strategy_snapshot(
+            db=tmp_strategy_db, domain="PM-5M",
+            strategy_name=engine.name,
+            tick_number=snap["total_obs"],
+            transition_counts=snap["transition_counts"],
+            state_counts=snap["state_counts"],
+            warmup_ticks=snap["warmup_ticks"],
+            threshold_pct=str(snap["threshold_pct"]),
+            state_space_size=engine._generator.state_count,
+            state_generator=engine._generator.generator_name,
+        )
         assert tmp_strategy_db["strategy_snapshots"].count == 1
 
     def test_snapshot_restore_cycle(self, tmp_strategy_db):
-        """Persist → restore produces engine with identical transition matrix."""
+        """Persist via persist_strategy_snapshot → restore produces identical matrix."""
+        from trady_ai.core.persistence import persist_strategy_snapshot
+
         engine = MarkovPersistenceEngine(warmup_ticks=5)
         for label in ["UP", "UP", "DOWN", "UP", "UP", "DOWN", "NEUTRAL"]:
             engine.update(_state("btc-usd", label))
-        engine.snapshot("PM-5M", tmp_strategy_db)
+        snap = engine.on_snapshot()
+        persist_strategy_snapshot(
+            db=tmp_strategy_db, domain="PM-5M",
+            strategy_name=engine.name,
+            tick_number=snap["total_obs"],
+            transition_counts=snap["transition_counts"],
+            state_counts=snap["state_counts"],
+            warmup_ticks=snap["warmup_ticks"],
+            threshold_pct=str(snap["threshold_pct"]),
+            state_space_size=engine._generator.state_count,
+            state_generator=engine._generator.generator_name,
+        )
 
         restored = MarkovPersistenceEngine.restore(
             "PM-5M", "markov_persistence", tmp_strategy_db
@@ -477,10 +503,23 @@ class TestSnapshotRestore:
 
     def test_restored_engine_same_evaluate(self, tmp_strategy_db):
         """Restored engine produces same evaluate() output as original."""
+        from trady_ai.core.persistence import persist_strategy_snapshot
+
         orig = MarkovPersistenceEngine(warmup_ticks=3)
         for label in ["UP", "UP", "DOWN", "UP", "UP"]:
             orig.update(_state("btc-usd", label))
-        orig.snapshot("PM-5M", tmp_strategy_db)
+        snap = orig.on_snapshot()
+        persist_strategy_snapshot(
+            db=tmp_strategy_db, domain="PM-5M",
+            strategy_name=orig.name,
+            tick_number=snap["total_obs"],
+            transition_counts=snap["transition_counts"],
+            state_counts=snap["state_counts"],
+            warmup_ticks=snap["warmup_ticks"],
+            threshold_pct=str(snap["threshold_pct"]),
+            state_space_size=orig._generator.state_count,
+            state_generator=orig._generator.generator_name,
+        )
 
         restored = MarkovPersistenceEngine.restore(
             "PM-5M", "markov_persistence", tmp_strategy_db
@@ -527,20 +566,60 @@ class TestSnapshotRestore:
                 "PM-5M", "markov_persistence", tmp_strategy_db
             )
 
+    def test_snapshot_deprecated_emits_warning_and_returns_dict(self):
+        """snapshot() emits DeprecationWarning and returns dict without DB write."""
+        engine = MarkovPersistenceEngine(warmup_ticks=5)
+        for label in ["UP", "UP", "DOWN", "UP"]:
+            engine.update(_state("btc-usd", label))
+
+        with pytest.warns(DeprecationWarning, match="snapshot.*deprecated"):
+            result = engine.snapshot("unused", None)
+
+        assert isinstance(result, dict)
+        assert "transition_counts" in result
+        assert "state_counts" in result
+        assert "total_obs" in result
+
     def test_append_only_invariant(self, tmp_strategy_db):
-        """Row count grows monotonically with each snapshot call."""
+        """Row count grows monotonically with each persist."""
+        from trady_ai.core.persistence import persist_strategy_snapshot
+
         engine = MarkovPersistenceEngine(warmup_ticks=1)
         for label in ["UP", "DOWN", "UP", "NEUTRAL"]:
             engine.update(_state("btc-usd", label))
-            engine.snapshot("PM-5M", tmp_strategy_db)
+            snap = engine.on_snapshot()
+            persist_strategy_snapshot(
+                db=tmp_strategy_db, domain="PM-5M",
+                strategy_name=engine.name,
+                tick_number=snap["total_obs"],
+                transition_counts=snap["transition_counts"],
+                state_counts=snap["state_counts"],
+                warmup_ticks=snap["warmup_ticks"],
+                threshold_pct=str(snap["threshold_pct"]),
+                state_space_size=engine._generator.state_count,
+                state_generator=engine._generator.generator_name,
+            )
         assert tmp_strategy_db["strategy_snapshots"].count == 4
 
     def test_tick_numbers_sequential_and_unique(self, tmp_strategy_db):
-        """Each snapshot has unique sequential tick_number per (name, domain)."""
+        """Each persisted snapshot has unique sequential tick_number per (name, domain)."""
+        from trady_ai.core.persistence import persist_strategy_snapshot
+
         engine = MarkovPersistenceEngine(warmup_ticks=1)
         for label in ["UP", "DOWN", "UP", "NEUTRAL", "DOWN"]:
             engine.update(_state("btc-usd", label))
-            engine.snapshot("PM-5M", tmp_strategy_db)
+            snap = engine.on_snapshot()
+            persist_strategy_snapshot(
+                db=tmp_strategy_db, domain="PM-5M",
+                strategy_name=engine.name,
+                tick_number=snap["total_obs"],
+                transition_counts=snap["transition_counts"],
+                state_counts=snap["state_counts"],
+                warmup_ticks=snap["warmup_ticks"],
+                threshold_pct=str(snap["threshold_pct"]),
+                state_space_size=engine._generator.state_count,
+                state_generator=engine._generator.generator_name,
+            )
 
         rows = list(
             tmp_strategy_db["strategy_snapshots"].rows_where(

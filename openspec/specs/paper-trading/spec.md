@@ -115,35 +115,48 @@ a warning.
 - WHEN manifest validation runs
 - THEN warning raised: "Calibration artifact in session bundle directory"
 
+### REQ-MC-005: Snapshot Creation During REFLECTING Stage
+
+Session SHALL delegate snapshot persistence to ReflectionEngine during the REFLECTING stage. Delegation occurs after analyzers complete, before report assembly. Strategy's internal `on_snapshot()` hook MAY still produce data but MUST NOT call `persist_strategy_snapshot()` directly.
+
+| Scenario | GIVEN | WHEN | THEN |
+|---|---|---|---|
+| Normal snapshot | ExecutionResult with transition_counts after EXECUTING | Session enters REFLECTING | ReflectionEngine persists snapshot with `created_by="reflection_engine"` |
+| Reflection failure | Engine exception during snapshot persist | Session REFLECTING stage | Session enters ERROR state; snapshot not persisted, state preserved for retry |
+| First session | Empty DB, no prior snapshot | ReflectionEngine checks existing | Skips idempotency check; persists first snapshot |
+
 ## MODIFIED Requirements
 
 ### REQ-PT-001: Session Lifecycle [MODIFIED]
 
-`PaperTradingSession` — stateless, `run_session() -> SessionReport`. Reconstruction uses per-clock sequence tracking (REQ-PT-010), not calendar day.
+`PaperTradingSession` — stateless, `run_session() -> SessionReport`. Reconstruction uses per-clock sequence tracking (REQ-PT-010), not calendar day. REFLECTING stage SHALL delegate strategy snapshot persistence to Reflection Clock. Session MUST NOT call `persist_strategy_snapshot()` directly (C6, D7).
 
-(Previously: reconstruction without per-clock sequence tracking)
+(Previously: reconstruction without per-clock sequence tracking; snapshots were created mid-stream by strategy's `snapshot()` hook.)
 
 | Transition | Validation |
 |---|---|
 | -> PRE_FLIGHT | Contracts + per-clock: Discovery `.env`, Evidence `max_seq`, Decision `last_processed_seq`, Reflection `last_report_date` |
 | -> CAPTURING | DRY_RUN_ENFORCED, NO_REAL_FUNDS, DB ok |
 | -> EXECUTING | >=1 new event since `last_processed_seq` |
-| -> REFLECTING | ExecutionResult persisted |
+| -> REFLECTING | ExecutionResult persisted; ReflectionEngine creates snapshot from ExecutionResult data (delegated) |
 | -> VERIFYING | reflection_report persisted |
 | -> BUNDLING | Evidence completeness |
 | -> COMPLETE | Manifest + checksums valid |
 
 - GIVEN interrupted after EXECUTING -> WHEN next session -> THEN resumes at REFLECTING
 - GIVEN full run -> WHEN `run_session("daily","FOOTBALL-WINNER",["0x123"])` -> THEN all states, SessionReport with `market_ids`
+- GIVEN ExecutionResult with transition_counts → WHEN session enters REFLECTING → THEN ReflectionEngine persists snapshot; session never imports `core.persistence.persist_strategy_snapshot`
 
 ### REQ-PT-005: Evidence Bundling [MODIFIED]
 
-`paper_trading/dia-NNN/sesion-MMM/` where `dia-NNN` = UTC calendar day (REQ-PT-019) and `sesion-MMM` = session number (REQ-PT-020). Each session writes to its own subdirectory. Files: `session_report.json`, `contracts.json`, `manifest.json`. Each includes `market_ids`. SHA-256 checksums in manifest. Session subdirectories replace HHMMSS filename suffixes.
+`paper_trading/dia-NNN/sesion-MMM/` where `dia-NNN` = UTC calendar day (REQ-PT-019) and `sesion-MMM` = session number (REQ-PT-020). Each session writes to its own subdirectory. Files: `session_report.json`, `contracts.json`, `manifest.json`. SHALL include `strategy_snapshot.json` when a snapshot was persisted during REFLECTING. Each includes `market_ids`. SHA-256 checksums in manifest. Session subdirectories replace HHMMSS filename suffixes.
 
-(Previously: flat `dia-NNN/` with `HHMMSS` timestamp suffixes; no session subdirectories)
+(Previously: flat `dia-NNN/` with `HHMMSS` timestamp suffixes; no session subdirectories; bundles did not include snapshot artifacts.)
 
 - GIVEN 96 sessions on Day 1 → WHEN all execute → THEN write to `dia-001/sesion-001/` through `dia-001/sesion-096/`, zero overwrites
 - GIVEN Day 1 completed → WHEN next session on new calendar day → THEN writes to `dia-002/sesion-001/`
+- GIVEN snapshot persisted during REFLECTING → WHEN bundling → THEN `dia-001/sesion-001/strategy_snapshot.json` present with checksum in manifest
+- GIVEN no snapshot (first session, empty DB) → WHEN bundling → THEN no `strategy_snapshot.json`; manifest unchanged
 
 ### REQ-PT-006: CLI Interface [MODIFIED]
 

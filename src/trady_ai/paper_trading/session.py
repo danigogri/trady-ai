@@ -174,10 +174,13 @@ class PaperTradingSession:
                 return report
 
             # ── EXECUTING ────────────────────────────────────────────────────
+            exec_result = None
             if SessionState.EXECUTING not in skip_stages:
                 self._record_stage(report, SessionState.EXECUTING)
                 try:
-                    self._do_execute(scope, domain)
+                    exec_result = self._do_execute(scope, domain)
+                    if exec_result is not None:
+                        report.strategy_snapshot = exec_result.strategy_snapshot
                 except Exception:
                     logger.exception("execute_stage_failed")
                     self._record_stage(report, SessionState.ERROR)
@@ -193,7 +196,7 @@ class PaperTradingSession:
             if SessionState.REFLECTING not in skip_stages:
                 self._record_stage(report, SessionState.REFLECTING)
                 try:
-                    ref_report = self._do_reflect(scope, domain)
+                    ref_report = self._do_reflect(scope, domain, exec_result)
                     reflection_id = getattr(ref_report, "id", None)
                     cal_state = getattr(ref_report, "calibration_state", "not_ready")
                     if reflection_id is not None:
@@ -343,19 +346,39 @@ class PaperTradingSession:
         finally:
             capture.stop()
 
-    def _do_execute(self, scope: str, domain: str) -> None:
-        """Run the execution engine on captured events."""
+    def _do_execute(self, scope: str, domain: str) -> Any:
+        """Run the execution engine on captured events.
+
+        Returns:
+            ExecutionResult: Result of the engine run, including strategy
+            snapshot data when available.
+        """
+        from trady_ai.core.engine import ExecutionResult
         from trady_ai.core.markov_strategy import MarkovStrategy
 
         engine = self._ensure_execution_engine()
         # Build a default strategy with conservative parameters
         strategy = MarkovStrategy(warmup_ticks=50, threshold_pct=0.001)
-        engine.run_from_store(strategy, since_seq=0)
+        return engine.run_from_store(strategy, since_seq=0)
 
-    def _do_reflect(self, scope: str, domain: str) -> Any:
-        """Run the reflection engine for post-execution analysis."""
+    def _do_reflect(self, scope: str, domain: str, execution_result: Any = None) -> Any:
+        """Run the reflection engine for post-execution analysis.
+
+        Args:
+            scope: Time scope for analysis.
+            domain: Market domain.
+            execution_result: Optional ``ExecutionResult`` from the execution
+                engine. When provided, the reflection engine persists strategy
+                snapshot data.
+
+        Returns:
+            ReflectionReport: Result of reflection analysis.
+        """
         engine = self._ensure_reflection_engine()
-        return engine.reflect(scope=scope, domain=domain, mode="dry_run")
+        return engine.reflect(
+            scope=scope, domain=domain, mode="dry_run",
+            execution_result=execution_result,
+        )
 
     # ── Reconstruction ──────────────────────────────────────────────────────
 

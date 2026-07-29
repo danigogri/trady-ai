@@ -2,7 +2,7 @@
 
 **Status:** PERMANENTLY FROZEN — Review cycle closed. All 13 documentation observations resolved.
 **Authority Level:** Architecture (binding for all Paper Trading SDD cycles, implementation, review, and audit)
-**Version:** 1.0
+**Version:** 2.1
 **Date Frozen:** July 2026
 **Derives Authority From:** PORTABLE-OS-CONSTITUTION.md, RFC-000 through RFC-009, TRADY-AI-MASTER-ROADMAP-001
 **Associated Reviews:** 8 architectural reviews + 3 documentation reviews — all resolved and archived
@@ -818,11 +818,13 @@ The Decision Clock executes inline within each Paper Trading session after Evide
 ### 16.2 Risk Constraints (Frozen)
 
 | Constraint | Value | Enforcement |
-|---|---|---|
+|---|---|---|---|
 | `position_size` | 10.00 USD (fixed) | ExecutionEngine uses this for all trades |
 | `stop_loss_pct` | 5% | ExecutionEngine checks before each trade |
 | `transaction_cost_pct` | 0.0% | Dry run — no real costs |
 | `dry_run` | True | DRY_RUN_ENFORCED contract enforces at PRE_FLIGHT |
+| `alpha` | 2.0 (see D-003) | ATR-based threshold multiplier, RuntimeConfig |
+| `atr_period` | 20 (see D-003) | ATR lookback window, RuntimeConfig |
 
 ---
 
@@ -1214,6 +1216,7 @@ These are the implementation items required before the 30-day experiment can beg
 | Version | Date | Sections Changed | Description |
 |---------|------|-----------------|-------------|
 | **1.0 → 2.0** | 2026-07-27 | §27 (Freeze), +§28 (Amendment Log), +§29 (Documented Deviations), +§30 (Multi-Domain Architecture) | Formalize BL-027 (OC-2 discovery deviation), BL-028 (multi-domain support), Binance platform integration. Three SDD cycles validated (calibration-framework, guard-script-domain-agnostic, binance-adapter). |
+| **2.0 → 2.1** | 2026-07-29 | §29 (Documented Deviations: +D-003), §16.2 (Risk Constraints), §27 (Version) | ATR-based measurement threshold (τ = α × ATR / price) replaces fixed threshold_pct. D-003 documents recalibration. measurement-calibration SDD, Phase 1 (ATR Foundation). |
 
 ## 29. Documented Deviations & Errata
 
@@ -1239,6 +1242,18 @@ These are the implementation items required before the 30-day experiment can beg
 **Impact:** Guard script is domain-agnostic (refactored 2026-07-27, SDD cycle). Adapter layer supports multiple platforms via identical contract (`subscribe_websocket` + `market_to_input`). Core engine is unchanged. Calibration framework is domain-agnostic.
 
 **Status:** ACCEPTED. See §30 for multi-domain architecture specification.
+
+### D-003: Measurement Threshold Recalibration (measurement-calibration)
+
+**Original contract (§16.2):** Fixed `threshold_pct=0.001` for all markets.
+
+**Operational reality (2026-07-29):** A fixed percentage threshold is too simplistic — it does not adapt to market volatility. ATR-based threshold (τ = α × ATR / price) replaces the fixed threshold. ATR is computed as the mean of absolute price changes over the most recent N ticks (configurable via `atr_period` and `alpha` in RuntimeConfig).
+
+**Impact:** `MarketStateTracker` now computes τ from per-market ATR when `alpha` is configured. `threshold_pct=0.001` remains as a fallback for markets with insufficient data. Behavior is additive — no change to sessions or strategies that do not configure `alpha`. When ATR is active, a single outlier spike is classified as UP/DOWN, followed by NEUTRAL as the threshold widens to include the spike.
+
+**Config defaults:** `alpha=2.0`, `atr_period=20`, `threshold_pct=0.001` — tested via ATRCalculator unit tests (12 tests) and MarketStateTracker ATR tests (7 tests).
+
+**Status:** ACCEPTED. Applied via measurement-calibration SDD, Phase 1 (ATR Foundation). See `src/trady_ai/strategies/markov/atr_calculator.py` for implementation.
 
 ## 30. Multi-Domain & Multi-Platform Architecture (v2.0)
 

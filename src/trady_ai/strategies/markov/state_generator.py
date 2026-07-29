@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from decimal import Decimal
 
 from trady_ai.core.models import MarketInput
+from trady_ai.strategies.markov.atr_calculator import ATRCalculator
 
 # ── Registry ────────────────────────────────────────────────────────
 
@@ -162,14 +163,26 @@ class DirectionalStateGenerator(StateGenerator):
     state_labels: list[str] = ["UP", "DOWN", "NEUTRAL"]
     _SIGNAL_MAP: dict[int, str] = {0: "LONG", 1: "SHORT", 2: "NEUTRAL"}
 
-    def __init__(self, threshold_pct: float = 0.001) -> None:
+    def __init__(
+        self,
+        threshold_pct: float = 0.001,
+        *,
+        alpha: float | None = None,
+        atr_period: int = 20,
+    ) -> None:
         self._threshold_pct = threshold_pct
+        self._atr = (
+            ATRCalculator(alpha=alpha, period=atr_period)
+            if alpha is not None
+            else None
+        )
         self._prices: dict[str, Decimal] = {}
 
     def classify(self, input: MarketInput) -> int:
         """Classify price direction relative to the previous tick.
 
         First tick for a market → NEUTRAL (index 2).
+        When ATR is configured, τ = α × ATR / price replaces threshold_pct.
         """
         previous_price = self._prices.get(input.market_id)
         self._prices[input.market_id] = input.price
@@ -178,11 +191,14 @@ class DirectionalStateGenerator(StateGenerator):
             return 2  # NEUTRAL
 
         change_pct = (input.price - previous_price) / previous_price
-        threshold = Decimal(str(self._threshold_pct))
 
-        if change_pct > threshold:
+        # ATR-based τ when available, else static threshold
+        τ = self._atr.update(input.market_id, input.price) if self._atr is not None else None
+        effective = τ if τ is not None else Decimal(str(self._threshold_pct))
+
+        if change_pct > effective:
             return 0  # UP
-        if change_pct < -threshold:
+        if change_pct < -effective:
             return 1  # DOWN
         return 2  # NEUTRAL
 
