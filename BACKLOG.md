@@ -2,7 +2,7 @@
 
 > Generado desde BACKLOG-PROTOCOL v1
 > Auditoría inicial: 2026-07-09
-> Última actualización: 2026-07-22 (BL-027, BL-028, BL-029 — Portable OS compliance hallazgos; BL-029 cerrado con 29 tests; BL-030 — bundle path duplicado post-dry-run; BL-031 — 8 tests de integración preexistentes rotos)
+> Última actualización: 2026-07-28 (BL-032 — .env prefix Bybit VPS Singapur)
 
 ---
 
@@ -135,6 +135,10 @@ Se detectó un bug preexistente durante el triage: `init_db` en `db/database.py`
 ### Orden 5: BL-030 (cosmético — post-dry-run)
 
 [BL-030] | bug | baja | src/trady_ai/paper_trading/bundler.py | **Bundle path `paper_trading/paper_trading/dia-001/` shows doubled prefix.** El bundler concatena `config.bundle_base_dir` (que el operador setea como `paper_trading/` relativo al CWD) con el path relativo del día, resultando en `paper_trading/paper_trading/` porque el CWD ya está dentro de `paper_trading/`. No blocker: el bundle se genera correctamente, los checksums son válidos, y la regeneración reproduce el mismo path. Arreglar: usar path absoluto desde `config.repo_root` en vez de path relativo al CWD, o normalizar `/` redundantes en la concatenación. | abierto
+
+### Orden 6: BL-032 (config — detectado PRE-FLIGHT 2026-07-28)
+
+[BL-032] | deuda | baja | `/opt/trady/.env` (Singapore VPS) | **Variables de Bybit sin prefijo `TRADY_AI_` son ignoradas por Pydantic Settings.** El `.env` tiene `BYBIT_WS_URL=wss://stream-testnet.bybit.com/v5/public/spot` y `BYBIT_REST_URL=https://api-testnet.bybit.com` sin el prefijo requerido `TRADY_AI_`. Pydantic Settings (env_prefix=`TRADY_AI_`) las ignora y usa los defaults de `settings.py`, que casualmente son los mismos valores (testnet). Sin impacto operacional, pero es misleading: si se cambia a producción en el futuro sin corregir, los defaults testnet seguirían activos. Fix: renombrar a `TRADY_AI_BYBIT_WS_URL` y `TRADY_AI_BYBIT_REST_URL`. Detectado durante Phase 3 PRE-FLIGHT (2026-07-28). | abierto
 
 ---
 

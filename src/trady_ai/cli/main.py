@@ -493,7 +493,7 @@ def session(scope: str, domain: str, markets: tuple[str, ...], non_interactive: 
 
     has_error = "ERROR" in report.stage_timestamps
 
-    click.echo(f"Paper Trading Session — Day {report.day}, Domain: {report.domain}")
+    click.echo(f"Paper Trading Session — Day {report.day}, Session {report.session_number}, Domain: {report.domain}")
     click.echo(f"  State: {'ERROR' if has_error else 'COMPLETE'}")
     click.echo(f"  Events: {report.event_count}, Trades: {report.trade_count}")
     click.echo(f"  Market IDs: {', '.join(report.market_ids) if report.market_ids else '(none)'}")

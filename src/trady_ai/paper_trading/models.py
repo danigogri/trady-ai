@@ -58,6 +58,7 @@ class SessionReport:
     """
 
     day: int
+    session_number: int
     domain: str
     event_count: int
     trade_count: int
@@ -74,12 +75,14 @@ class SessionManifest:
 
     Attributes:
         day: Day number in the 30-day lifecycle.
+        session_number: Session number within the day (1-indexed).
         domain: Market domain.
         created_at: ISO-8601 timestamp of bundle creation.
         artifact_checksums: Mapping of artifact filename → SHA-256 hex digest.
     """
 
     day: int
+    session_number: int
     domain: str
     created_at: str
     artifact_checksums: dict[str, str] = field(default_factory=dict)

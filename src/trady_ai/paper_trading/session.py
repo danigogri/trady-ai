@@ -13,7 +13,7 @@ Operational Isolation Contract (REQ-PT-003):
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import sqlite_utils
@@ -32,6 +32,10 @@ from trady_ai.paper_trading.contracts import (
 from trady_ai.paper_trading.models import ContractViolation, SessionReport, SessionState
 
 logger = structlog.get_logger()
+
+# Calendar day zero — fixed reference point for day computation (REQ-PT-019).
+# Day 1 = 2026-07-28. Calendar day advances regardless of session execution.
+DAY_ZERO = date(2026, 7, 28)
 
 # Lazy import guard — EventCapture is imported inside the method to keep
 # the module-level import boundary clean for AST checking.
@@ -101,9 +105,11 @@ class PaperTradingSession:
             ``SessionReport`` with stage timestamps, contract results, and
             aggregated counts.
         """
-        day = self._compute_day(domain)
+        day = self._compute_calendar_day()
+        session_number = self._compute_session_number(domain)
         report = SessionReport(
             day=day,
+            session_number=session_number,
             domain=domain,
             event_count=0,
             trade_count=0,
@@ -490,10 +496,23 @@ class PaperTradingSession:
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
-    def _compute_day(self, domain: str) -> int:
-        """Compute the current session day (1-30) from existing reports."""
+    def _compute_calendar_day(self) -> int:
+        """Compute the current calendar day from DAY_ZERO (REQ-PT-019).
+
+        Returns 1-based day number independent of session execution count.
+        """
+        delta = date.today() - DAY_ZERO
+        return delta.days + 1
+
+    def _compute_session_number(self, domain: str) -> int:
+        """Compute 1-indexed session number for the domain today (REQ-PT-020).
+
+        Counts existing reflection_reports for the same domain where
+        DATE(created_at) = DATE('now'), then returns COUNT + 1.
+        """
         row = self._db.execute(
-            "SELECT COUNT(*) FROM reflection_reports WHERE domain = ?",
+            "SELECT COUNT(*) FROM reflection_reports "
+            "WHERE domain = ? AND DATE(created_at) = DATE('now')",
             [domain],
         ).fetchone()
         return (int(row[0]) if row and row[0] else 0) + 1

@@ -91,6 +91,7 @@ class TestSessionReport:
 
         report = SessionReport(
             day=1,
+            session_number=1,
             domain="PM-5M",
             event_count=10,
             trade_count=5,
@@ -105,6 +106,7 @@ class TestSessionReport:
 
         report = SessionReport(
             day=5,
+            session_number=1,
             domain="PM-5M",
             event_count=0,
             trade_count=0,
@@ -117,6 +119,7 @@ class TestSessionReport:
 
         report = SessionReport(
             day=30,
+            session_number=1,
             domain="PM-5M",
             event_count=100,
             trade_count=50,
@@ -138,6 +141,7 @@ class TestSessionReport:
         ]
         report = SessionReport(
             day=1,
+            session_number=1,
             domain="PM-5M",
             event_count=10,
             trade_count=5,
@@ -152,6 +156,7 @@ class TestSessionReport:
 
         report = SessionReport(
             day=1,
+            session_number=1,
             domain="PM-5M",
             event_count=10,
             trade_count=5,
@@ -171,7 +176,7 @@ class TestSessionManifest:
     def test_default_artifact_checksums(self):
         from trady_ai.paper_trading.models import SessionManifest
 
-        m = SessionManifest(day=1, domain="PM-5M", created_at="2024-01-01T00:00:00")
+        m = SessionManifest(day=1, session_number=1, domain="PM-5M", created_at="2024-01-01T00:00:00")
         assert m.artifact_checksums == {}
 
     def test_with_checksums(self):
@@ -179,6 +184,7 @@ class TestSessionManifest:
 
         m = SessionManifest(
             day=1,
+            session_number=1,
             domain="PM-5M",
             created_at="2024-01-01T00:00:00",
             artifact_checksums={"session_report.json": "abc123def456"},

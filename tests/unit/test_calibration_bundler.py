@@ -246,11 +246,13 @@ class TestCalibrationBundler:
 
         session_report = SessionReport(
             day=5,
+            session_number=1,
             domain="PM-5M",
             event_count=10,
             trade_count=5,
             reflection_report_id=1,
         )
         session_path = bundler.bundle(session_report)
-        assert session_path.name == "dia-005"
-        assert session_path.parent == bundle_path.parent  # both in paper_trading/
+        assert session_path.name == "sesion-001"
+        assert session_path.parent.name == "dia-005"
+        assert session_path.parent.parent == bundle_path.parent  # both under paper_trading/

@@ -49,54 +49,55 @@ class EvidenceBundler:
         Creates the output directory, serializes the report and contract
         results, computes SHA-256 checksums, and writes a manifest.
 
-        All filenames include an ``HHMMSS`` UTC timestamp suffix to prevent
-        overwrites when multiple sessions execute within the same calendar day.
+        Each session writes to its own ``dia-NNN/sesion-MMM/`` subdirectory
+        — no timestamp suffixes needed since session subdirectories guarantee
+        uniqueness.
 
         Args:
             report: ``SessionReport`` from a paper trading session run.
 
         Returns:
-            ``Path`` to the created bundle directory (``dia-NNN/``).
+            ``Path`` to the created session directory (``sesion-MMM/``).
         """
-        day_dir = self._day_dir(report.day)
-        day_dir.mkdir(parents=True, exist_ok=True)
-
-        ts = datetime.now(UTC).strftime("%H%M%S")
+        session_dir = self._day_dir(report.day, report.session_number)
+        session_dir.mkdir(parents=True, exist_ok=True)
 
         # ── Write session report ─────────────────────────────────────────────
-        report_path = day_dir / f"session_report-{ts}.json"
+        report_path = session_dir / "session_report.json"
         report_data = _dataclass_to_dict(report)
         report_path.write_text(json.dumps(report_data, indent=2, default=str))
 
         # ── Write contract results ───────────────────────────────────────────
-        contracts_path = day_dir / f"contracts-{ts}.json"
+        contracts_path = session_dir / "contracts.json"
         contracts_data = [_dataclass_to_dict(v) for v in report.contract_results]
         contracts_path.write_text(json.dumps(contracts_data, indent=2))
 
         # ── Compute SHA-256 checksums ────────────────────────────────────────
         checksums: dict[str, str] = {}
-        for name in [f"session_report-{ts}.json", f"contracts-{ts}.json"]:
-            content = (day_dir / name).read_bytes()
+        for name in ["session_report.json", "contracts.json"]:
+            content = (session_dir / name).read_bytes()
             checksums[name] = hashlib.sha256(content).hexdigest()
 
         # ── Write manifest ───────────────────────────────────────────────────
         manifest = SessionManifest(
             day=report.day,
+            session_number=report.session_number,
             domain=report.domain,
             created_at=datetime.now(UTC).isoformat(),
             artifact_checksums=checksums,
         )
-        manifest_path = day_dir / f"manifest-{ts}.json"
+        manifest_path = session_dir / "manifest.json"
         manifest_data = _dataclass_to_dict(manifest)
         manifest_path.write_text(json.dumps(manifest_data, indent=2))
 
         logger.info(
             "evidence_bundle_created",
             day=report.day,
+            session=report.session_number,
             domain=report.domain,
-            path=str(day_dir),
+            path=str(session_dir),
         )
-        return day_dir
+        return session_dir
 
     def regenerate_bundle(self, day: int, domain: str) -> Path:
         """Regenerate evidence bundle from DB for a past day.
@@ -130,6 +131,7 @@ class EvidenceBundler:
 
         report = SessionReport(
             day=day,
+            session_number=1,
             domain=domain,
             event_count=event_count,
             trade_count=trade_count,
@@ -222,9 +224,9 @@ class EvidenceBundler:
         """Return ``cal-NNN/`` path beneath ``paper_trading/``."""
         return self._output_base / "paper_trading" / f"cal-{day:03d}"
 
-    def _day_dir(self, day: int) -> Path:
-        """Return ``dia-NNN/`` path beneath ``paper_trading/``."""
-        return self._output_base / "paper_trading" / f"dia-{day:03d}"
+    def _day_dir(self, day: int, session: int) -> Path:
+        """Return ``dia-NNN/sesion-MMM/`` path beneath ``paper_trading/``."""
+        return self._output_base / "paper_trading" / f"dia-{day:03d}" / f"sesion-{session:03d}"
 
     def _count_today_events(self, day: int) -> int:
         """Count events for a given session day.

@@ -22,27 +22,20 @@ def _make_db() -> sqlite_utils.Database:
     return db
 
 
-def _find_file(bundle_path: Path, prefix: str) -> Path:
-    """Find a timestamped file in the bundle directory by prefix.
-
-    Files are named ``{prefix}-HHMMSS.json`` by the bundler.
-    """
-    matches = list(bundle_path.glob(f"{prefix}-*.json"))
-    assert len(matches) == 1, f"Expected 1 {prefix}-*.json, found {len(matches)}"
-    return matches[0]
-
-
-def _read_json(bundle_path: Path, prefix: str) -> dict:
-    """Find and parse a timestamped JSON file in the bundle directory."""
-    return json.loads(_find_file(bundle_path, prefix).read_text())
+def _read_json(bundle_path: Path, name: str) -> dict:
+    """Find and parse a JSON file in the bundle directory by name."""
+    file_path = bundle_path / name
+    assert file_path.exists(), f"Expected {name} in {bundle_path}"
+    return json.loads(file_path.read_text())
 
 
 class TestEvidenceBundlerBundle:
     """EvidenceBundler.bundle() — output structure and determinism."""
 
-    def _make_report(self, day: int = 1) -> SessionReport:
+    def _make_report(self, day: int = 1, session: int = 1) -> SessionReport:
         return SessionReport(
             day=day,
+            session_number=session,
             domain="PM-5M",
             event_count=10,
             trade_count=5,
@@ -50,7 +43,7 @@ class TestEvidenceBundlerBundle:
         )
 
     def test_bundle_creates_manifest_with_checksums(self, tmp_path):
-        """manifest-HHMMSS.json contains day, domain, created_at, artifact_checksums."""
+        """manifest.json contains day, domain, created_at, artifact_checksums."""
         from trady_ai.paper_trading.bundler import EvidenceBundler
 
         db = _make_db()
@@ -59,17 +52,17 @@ class TestEvidenceBundlerBundle:
 
         bundle_path = bundler.bundle(report)
 
-        manifest = _read_json(bundle_path, "manifest")
+        manifest = _read_json(bundle_path, "manifest.json")
         assert manifest["day"] == 1
         assert manifest["domain"] == "PM-5M"
         assert "created_at" in manifest
         assert "artifact_checksums" in manifest
-        # Checksums reference timestamped filenames
+        # Checksums reference plain filenames
         for key in manifest["artifact_checksums"]:
-            assert key.startswith("session_report-") or key.startswith("contracts-")
+            assert key in ("session_report.json", "contracts.json")
 
     def test_bundle_creates_session_report_json(self, tmp_path):
-        """session_report-HHMMSS.json contains the full SessionReport data."""
+        """session_report.json contains the full SessionReport data."""
         from trady_ai.paper_trading.bundler import EvidenceBundler
 
         db = _make_db()
@@ -78,15 +71,16 @@ class TestEvidenceBundlerBundle:
 
         bundle_path = bundler.bundle(report)
 
-        data = _read_json(bundle_path, "session_report")
+        data = _read_json(bundle_path, "session_report.json")
         assert data["day"] == 1
+        assert data["session_number"] == 1
         assert data["domain"] == "PM-5M"
         assert data["event_count"] == 10
         assert data["trade_count"] == 5
         assert data["reflection_report_id"] == 1
 
     def test_bundle_creates_contracts_json(self, tmp_path):
-        """contracts-HHMMSS.json contains contract validation results."""
+        """contracts.json contains contract validation results."""
         from trady_ai.paper_trading.bundler import EvidenceBundler
 
         db = _make_db()
@@ -98,6 +92,7 @@ class TestEvidenceBundlerBundle:
         )
         report = SessionReport(
             day=1,
+            session_number=1,
             domain="PM-5M",
             event_count=0,
             trade_count=0,
@@ -107,7 +102,7 @@ class TestEvidenceBundlerBundle:
         bundler = EvidenceBundler(db, output_base=str(tmp_path))
         bundle_path = bundler.bundle(report)
 
-        data = _read_json(bundle_path, "contracts")
+        data = _read_json(bundle_path, "contracts.json")
         assert len(data) == 1
         assert data[0]["contract_name"] == "DRY_RUN_ENFORCED"
 
@@ -119,6 +114,7 @@ class TestEvidenceBundlerBundle:
         bundler = EvidenceBundler(db, output_base=str(tmp_path))
         report = SessionReport(
             day=5,
+            session_number=1,
             domain="PM-5M",
             event_count=0,
             trade_count=0,
@@ -126,8 +122,8 @@ class TestEvidenceBundlerBundle:
         )
 
         bundle_path = bundler.bundle(report)
-        assert bundle_path.name == "dia-005"
-        assert bundle_path.parent.name == "paper_trading"
+        assert bundle_path.name == "sesion-001"
+        assert bundle_path.parent.name == "dia-005"
 
     def test_bundle_output_is_deterministic(self, tmp_path):
         """Two bundles for same day produce identical checksums."""
@@ -140,8 +136,8 @@ class TestEvidenceBundlerBundle:
         path1 = bundler.bundle(report)
         path2 = bundler.bundle(report)
 
-        manifest1 = _read_json(path1, "manifest")
-        manifest2 = _read_json(path2, "manifest")
+        manifest1 = _read_json(path1, "manifest.json")
+        manifest2 = _read_json(path2, "manifest.json")
         assert manifest1["artifact_checksums"] == manifest2["artifact_checksums"]
 
 
@@ -188,7 +184,7 @@ class TestEvidenceBundlerRegenerate:
 
         bundle_path = bundler.regenerate_bundle(1, "PM-5M")
         assert bundle_path.exists()
-        manifest = _read_json(bundle_path, "manifest")
+        manifest = _read_json(bundle_path, "manifest.json")
         assert manifest["day"] == 1
         assert manifest["domain"] == "PM-5M"
         assert len(manifest["artifact_checksums"]) == 2
@@ -213,6 +209,6 @@ class TestEvidenceBundlerRegenerate:
 
         path1 = bundler.regenerate_bundle(1, "PM-5M")
         path2 = bundler.regenerate_bundle(1, "PM-5M")
-        m1 = _read_json(path1, "manifest")
-        m2 = _read_json(path2, "manifest")
+        m1 = _read_json(path1, "manifest.json")
+        m2 = _read_json(path2, "manifest.json")
         assert m1["artifact_checksums"] == m2["artifact_checksums"]

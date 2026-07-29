@@ -29,11 +29,31 @@ cron `*/15 * * * *` -> guard -> `trady-ai paper-trade session --domain FOOTBALL-
 
 - GIVEN cron fires at :00/:15/:30/:45, guard exits 0 -> WHEN triggered -> THEN session runs non-interactive, 60s capture
 
-### REQ-PT-012: Session Report Audit Trail [NEW]
+### REQ-PT-019: Calendar Day Computation [NEW]
 
-`SessionReport` MUST include `market_ids: list[str]`. *Ref: S5, S25.3*
+The system SHALL compute the calendar day as `(date.today() - DAY_ZERO).days + 1` where DAY_ZERO is hardcoded as `date(2026, 7, 28)`. Calendar day progression SHALL be independent of session execution — skipped days advance the counter regardless. MUST NOT depend on DB state.
 
-- GIVEN session with `["0xABC","0xDEF"]` -> WHEN report written -> THEN `market_ids` present
+**Deterministic boundary**: Frozen DAY_ZERO constant; date arithmetic.
+
+| Scenario | GIVEN | WHEN | THEN |
+|---|---|---|---|
+| First day | today = 2026-07-28 (DAY_ZERO) | `_compute_calendar_day()` | returns 1 |
+| Next day | today = 2026-07-29 | `_compute_calendar_day()` | returns 2 |
+| VPS down 2 days | today = 2026-08-05, DAY_ZERO = Jul 28 | session resumes | returns 9 (elapsed days), not session count |
+| Midnight boundary | session 96 at 23:55, next at 00:05 | `_compute_calendar_day()` at 00:05 | returns next day's value |
+
+### REQ-PT-020: Session Counter [NEW]
+
+The system SHALL compute a session number by counting `reflection_reports` for the same domain where `DATE(created_at) = DATE('now')`, then adding 1. Session numbers SHALL be 1-indexed per domain, per calendar day.
+
+**Deterministic boundary**: SQL COUNT of today's reports for the domain.
+
+| Scenario | GIVEN | WHEN | THEN |
+|---|---|---|---|
+| First session | no reports for domain today | `_compute_session_number()` | returns 1 |
+| Fourth session | 3 existing reports today | `_compute_session_number()` | returns 4 |
+| Midnight reset | session 96 at 23:55 | `_compute_session_number()` at 00:05 | returns 1 (new day) |
+| Empty DB | `reflection_reports` table empty | `_compute_session_number()` | returns 1 |
 
 ### REQ-PT-013: Backlog Integration [NEW]
 
@@ -118,19 +138,20 @@ a warning.
 
 ### REQ-PT-005: Evidence Bundling [MODIFIED]
 
-`paper_trading/dia-NNN/` where `dia-NNN` = UTC calendar day, not session counter. Multiple sessions/day share the same day directory. Files within the directory use `HHMMSS` UTC timestamp suffix to prevent overwrites from concurrent sessions: `session_report-HHMMSS.json`, `contracts-HHMMSS.json`, `manifest-HHMMSS.json`. Each file includes `market_ids`. SHA-256 checksums in manifest.
+`paper_trading/dia-NNN/sesion-MMM/` where `dia-NNN` = UTC calendar day (REQ-PT-019) and `sesion-MMM` = session number (REQ-PT-020). Each session writes to its own subdirectory. Files: `session_report.json`, `contracts.json`, `manifest.json`. Each includes `market_ids`. SHA-256 checksums in manifest. Session subdirectories replace HHMMSS filename suffixes.
 
-(Previously: `dia-NNN` ambiguous; no `market_ids` field; no concurrent-write protection)
+(Previously: flat `dia-NNN/` with `HHMMSS` timestamp suffixes; no session subdirectories)
 
-- GIVEN 96 sessions on 2026-07-20 -> WHEN execute -> THEN all write to `dia-020/` with unique `HHMMSS` filenames, zero overwrites
+- GIVEN 96 sessions on Day 1 → WHEN all execute → THEN write to `dia-001/sesion-001/` through `dia-001/sesion-096/`, zero overwrites
+- GIVEN Day 1 completed → WHEN next session on new calendar day → THEN writes to `dia-002/sesion-001/`
 
 ### REQ-PT-006: CLI Interface [MODIFIED]
 
-`session --domain FOOTBALL-WINNER [--non-interactive] [--duration 60]`, `status`, `bundle`. `--non-interactive` suppresses prompts. `--duration` sets capture window.
+`session --domain FOOTBALL-WINNER [--non-interactive] [--duration 60]`, `status`, `bundle`. `--non-interactive` suppresses prompts. `--duration` sets capture window. Output SHALL display "Day {N}, Session {M}".
 
-(Previously: no `--non-interactive` or `--duration`)
+(Previously: no `--non-interactive` or `--duration`; displayed "Day N" only)
 
-- GIVEN `--non-interactive --duration 60` -> WHEN invoked -> THEN no prompts, 60s capture, exit 0/1
+- GIVEN `--non-interactive --duration 60`, day 1, session 4 → WHEN invoked → THEN output "Day 1, Session 4", no prompts, 60s capture, exit 0/1
 
 ### REQ-PT-007: Error Handling [MODIFIED]
 
@@ -142,11 +163,20 @@ Capture/Execute/Reflect fail -> ERROR, retryable with preserved state. Interrupt
 
 ### REQ-PT-008: 30-Day Lifecycle [MODIFIED]
 
-Day -1: FREEZE (rules, 5-10 Condition IDs, VPS, crontab). Day 0: pre-flight. Days 1-30: 15-min cycle. Day 30: >=30 reports -> `ready_for_calibration`.
+Day -1: FREEZE (rules, 5-10 Condition IDs, VPS, crontab). Day 0: pre-flight. Days 1-30: 15-min cycle using calendar days from frozen DAY_ZERO (`date(2026, 7, 28)`). Calendar day progression SHALL be independent of session execution. Day 30: >=30 reports → `ready_for_calibration`.
 
-(Previously: daily cycle; no Day -1)
+(Previously: daily cycle; no Day -1; day counter was session-based `COUNT(*)`)
 
-- GIVEN 30 days, >=30 reports -> THEN `calibration_state = "ready_for_calibration"`
+- GIVEN DAY_ZERO = 2026-07-28, today = 2026-08-26 → WHEN day computation runs → THEN calendar day = 30 regardless of sessions executed
+- GIVEN VPS down for days 5-7 (zero sessions) → WHEN VPS resumes → THEN calendar day = 8, preserving 30-day timeline
+
+### REQ-PT-012: Session Report Audit Trail [MODIFIED]
+
+`SessionReport` MUST include `market_ids: list[str]` and `session_number: int`. `SessionManifest` SHALL include `session_number`.
+
+(Previously: only `market_ids`; no `session_number`)
+
+- GIVEN third session of Day 1 for "FOOTBALL-WINNER" with `["0xABC","0xDEF"]` → WHEN report written → THEN `market_ids` present, `session_number = 3`
 
 ### REQ-PT-002: Operational Contracts [MODIFIED]
 
