@@ -2,7 +2,7 @@
 
 > Generado desde BACKLOG-PROTOCOL v1
 > Auditoría inicial: 2026-07-09
-> Última actualización: 2026-07-29 (BL-033 cerrado — fix-calendar-day-counter; BL-021 cerrado; VPS DB limpiada)
+> Última actualización: 2026-07-29 (BL-034 a BL-040 — 7 PARTIAL hallazgos verify measurement-calibration; SDD archive commit 4cf223f)
 
 ---
 
@@ -143,6 +143,30 @@ Se detectó un bug preexistente durante el triage: `init_db` en `db/database.py`
 ### Orden 7: BL-033 (CRITICAL — detectado Day 0 2026-07-28)
 
 [BL-033] | bug | crítica | src/trady_ai/paper_trading/session.py | **`_compute_day()` = session counter, no calendar day counter — false positive en experimento de 30 días.** Detectado por el operador a los 15 minutos de arrancar Day 0 (2026-07-28 18:30 UTC): "Day 3" y "Day 4" aparecieron en 15 minutos. Root cause: `_compute_day()` usaba `COUNT(*) FROM reflection_reports` — cada sesión de 15 min crea un report → 96 "días" por día real. `temporal_integrity()` había sido actualizado para permitir múltiples sesiones/día, pero `_compute_day()` quedó con la semántica de 1 sesión/día. | cerrado (fix-calendar-day-counter SDD cycle, commit 52d0c71: DAY_ZERO frozen + _compute_calendar_day() + _compute_session_number()). Forensic archive en paper_trading/archive/bug-session-counter-2026-07-28/. VPS DB limpiada 2026-07-29.
+
+---
+
+## Fase 5.1 — Measurement Calibration SDD (Verify hallazgos)
+
+> Fuente: `openspec/changes/archive/2026-07-29-measurement-calibration/verify-report.md`
+> Veredicto verify: FAIL — 0 CRITICAL, 5 WARNING, 3 SUGGESTION (35/48 compliant, 7 PARTIAL, 6 N/A)
+> SDD archive: commit `4cf223f`. ATR path DORMANT — requiere calibración pre-Day-0 por el operador.
+
+### Orden 8: BL-034 — BL-040 (7 PARTIAL scenarios — cobertura de tests diferida)
+
+[BL-034] | deuda | media | tests/unit/test_calibration_analyzer.py (inexistente) | **REQ-MC-004: `classified_state` en `event_store` no tiene test directo.** El diseño resolvió usar `execution_log.state` (columna existente) en vez de agregar una columna a `event_store`. El verify report (2 escenarios PARTIAL) pide test que confirme que `execution_log.state` satisface el requisito. | abierto
+
+[BL-035] | deuda | media | tests/unit/test_calibration_analyzer.py (inexistente) | **REQ-MC-014: `calibrate review` con thresholds variables (min/max/mean) no tiene test.** El `CalibrationAnalyzer` debe mostrar el rango de thresholds cuando existen múltiples snapshots con diferentes `threshold_pct`. El archivo de test referenciado en `tasks.md` no existe (3 escenarios PARTIAL). | abierto
+
+[BL-036] | deuda | media | src/trady_ai/reflection/calibration/ | **R5: path `needs_recalibration` cuando NEUTRAL > 50% no testeado directamente.** La lógica de `_check_calibration_readiness` existe pero el escenario donde NEUTRAL rate es alto (72%) y dispara `needs_recalibration` no tiene cobertura de test (2 escenarios PARTIAL). | abierto
+
+[BL-037] | deuda | baja | src/trady_ai/paper_trading/session.py:356 | **ruff F401: unused import `ExecutionResult`.** El tipo de retorno usa `Any` en vez de `ExecutionResult` para evitar un import cycle. El import está pero no se usa directamente. | abierto
+
+[BL-038] | deuda | baja | Papertrading review/PAPER-TRADING-ARCHITECTURE-CONTRACT.md:1293 | **Architecture Contract footer dice "v2.0" pero el header dice "v2.1".** El amendment §28 documenta v2.0→v2.1 correctamente, pero el footer no se actualizó. | abierto
+
+[BL-039] | deuda | baja | openspec/specs/measurement-calibration/spec.md | **REQ-MC-004 resolución no formalizada en spec.** El diseño decidió usar `execution_log.state` como canonical `classified_state`. La spec debería reflejar esta decisión explícitamente en vez de mantener la ambigüedad. | abierto
+
+[BL-040] | deuda | baja | src/trady_ai/core/engine.py, src/trady_ai/paper_trading/session.py | **ATR path DORMANT — sin activación automática.** `engine.py` sigue usando `threshold_pct=0.001`. El operador debe ejecutar calibración pre-Day-0 y adoptar α/ATR explícitamente. No es un bug — es una decisión de diseño documentada, pero debe registrarse para no olvidar activarlo. | abierto
 
 ---
 
