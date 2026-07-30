@@ -7,9 +7,11 @@ Provides:
     - StateGenerator: pluggable state classification ABC
     - DirectionalStateGenerator: threshold-based UP/DOWN/NEUTRAL classifier
     - VolatilityStateGenerator: volatility-regime classifier (HIGH/LOW/STABLE)
+    - ATRCalculator: deterministic ATR-based threshold computation
     - get_generator: factory function for named generators
 """
 
+from trady_ai.strategies.markov.atr_calculator import ATRCalculator
 from trady_ai.strategies.markov.persistence import (
     DirectionalPersistence,
     MarkovPersistenceEngine,
@@ -23,6 +25,7 @@ from trady_ai.strategies.markov.state_generator import (
 )
 
 __all__ = [
+    "ATRCalculator",
     "DirectionalPersistence",
     "DirectionalStateGenerator",
     "MarkovPersistenceEngine",

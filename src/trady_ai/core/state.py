@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 from decimal import Decimal
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from trady_ai.core.models import MarketInput, MarketState
-from trady_ai.strategies.markov.atr_calculator import ATRCalculator
+
+if TYPE_CHECKING:
+    from trady_ai.strategies.markov.atr_calculator import ATRCalculator
 
 
 class MarketStateTracker:
@@ -36,11 +40,10 @@ class MarketStateTracker:
     ):
         self._states: dict[str, MarketState] = {}
         self._threshold_pct = threshold_pct
-        self._atr = (
-            ATRCalculator(alpha=alpha, period=atr_period)
-            if alpha is not None
-            else None
-        )
+        self._atr = None
+        if alpha is not None:
+            from trady_ai.strategies.markov.atr_calculator import ATRCalculator
+            self._atr = ATRCalculator(alpha=alpha, period=atr_period)
 
     def update(self, market_input: MarketInput) -> MarketState:
         """Process a new MarketInput and return the classified MarketState.
