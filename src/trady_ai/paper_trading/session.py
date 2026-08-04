@@ -349,14 +349,27 @@ class PaperTradingSession:
     def _do_execute(self, scope: str, domain: str) -> Any:
         """Run the execution engine on captured events.
 
+        ATR activation: set ``TRADY_AI_ALPHA`` env var to a value >= 1.0
+        to activate ATR-based threshold. When unset or 0, uses static
+        ``threshold_pct`` (backward compat, ATR dormant).
+
         Returns:
             ExecutionResult: Result of the engine run, including strategy
             snapshot data when available.
         """
+        import os
+
         from trady_ai.core.engine import ExecutionResult
         from trady_ai.core.markov_strategy import MarkovStrategy
 
-        engine = self._ensure_execution_engine()
+        # Read ATR config from env vars (calibration pilot)
+        env_alpha = os.environ.get("TRADY_AI_ALPHA")
+        env_atr = os.environ.get("TRADY_AI_ATR_PERIOD")
+
+        engine = self._ensure_execution_engine(
+            alpha=float(env_alpha) if env_alpha else None,
+            atr_period=int(env_atr) if env_atr else None,
+        )
         # Build a default strategy with conservative parameters
         strategy = MarkovStrategy(warmup_ticks=50, threshold_pct=0.001)
         return engine.run_from_store(strategy, since_seq=0)
@@ -484,16 +497,49 @@ class PaperTradingSession:
 
     # ── Collaborator factories ───────────────────────────────────────────────
 
-    def _ensure_execution_engine(self) -> Any:
-        """Return execution engine, constructing a default if needed."""
+    def _ensure_execution_engine(
+        self,
+        alpha: float | None = None,
+        atr_period: int | None = None,
+    ) -> Any:
+        """Return execution engine, constructing a default if needed.
+
+        Args:
+            alpha: Override for ATR alpha constant (None = use config default).
+            atr_period: Override for ATR lookback period (None = use config default).
+        """
         if self._execution_engine is not None:
+            # Rebuild if ATR params changed from env
+            if alpha is not None or atr_period is not None:
+                from trady_ai.config import get_settings
+                from trady_ai.core.engine import ExecutionEngine
+
+                settings = get_settings()
+                updates: dict[str, float | int] = {}
+                if alpha is not None:
+                    updates["alpha"] = alpha
+                if atr_period is not None:
+                    updates["atr_period"] = atr_period
+                config = settings.get_runtime_config().model_copy(update=updates)
+                self._execution_engine = ExecutionEngine(
+                    config, self._db, dry_run=True
+                )
             return self._execution_engine
 
         from trady_ai.config import get_settings
         from trady_ai.core.engine import ExecutionEngine
 
         settings = get_settings()
-        config = settings.get_runtime_config()
+        updates: dict[str, float | int] = {}
+        if alpha is not None:
+            updates["alpha"] = alpha
+        if atr_period is not None:
+            updates["atr_period"] = atr_period
+        config = (
+            settings.get_runtime_config().model_copy(update=updates)
+            if updates
+            else settings.get_runtime_config()
+        )
         self._execution_engine = ExecutionEngine(config, self._db, dry_run=True)
         return self._execution_engine
 

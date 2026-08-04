@@ -148,12 +148,15 @@ class MarkovPersistenceEngine(StrategyBase):
     def on_snapshot(self) -> dict[str, Any]:
         """Return serializable snapshot of internal state."""
         return {
+            "strategy_name": self.name,
             "transition_counts": self._transition_counts.tolist(),
             "state_counts": self._state_counts.tolist(),
             "total_obs": self._total_obs,
             "last_state_idx": self._last_state_idx,
             "warmup_ticks": self._warmup_ticks,
             "threshold_pct": self._threshold_pct,
+            "state_space_size": self._generator.state_count,
+            "state_generator": self._generator.__class__.__name__,
         }
 
     # ── persistence: snapshot / restore ──────────────────────────────

@@ -65,7 +65,11 @@ class ExecutionEngine:
         self._db = db
         self._dry_run = dry_run
         self._state_generator = state_generator
-        self._state_tracker = MarketStateTracker(config.threshold_pct)
+        self._state_tracker = MarketStateTracker(
+            config.threshold_pct,
+            alpha=config.alpha if config.alpha > 0 else None,
+            atr_period=config.atr_period,
+        )
         self._previous_states: dict[str, str | None] = {}
         self._risk_enforcer = RiskEnforcer()
         self._position_manager = PositionManager()

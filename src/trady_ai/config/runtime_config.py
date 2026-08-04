@@ -12,7 +12,7 @@ class RuntimeConfig(BaseModel):
     """
 
     threshold_pct: float = Field(default=0.001, gt=0.0, le=1.0)
-    alpha: float = Field(default=2.0, ge=1.0, le=10.0)
+    alpha: float = Field(default=0.0, ge=0.0, le=10.0)
     atr_period: int = Field(default=20, gt=1, le=200)
     warmup_ticks: int = Field(default=50, gt=0)
     position_size: Decimal = Field(default=Decimal("10.00"), gt=Decimal("0"))
