@@ -301,8 +301,8 @@ AWS cambió el Free Tier recientemente. El modelo actual:
   - Informe: `archive/measurement-calibration/ATR-CALIBRATION-REPORT-2026-08-04.md`
 - [x] Operador adopta α=1.0, N=14 via `calibrate adopt --confirm` — *2026-08-04 ✅* (adoption ID: 1, bundle: cal-004)
 - [x] Activar ATR path frozen en `session.py` (α=1.0, N=14 fijos, sin env var) — *2026-08-04 ✅* (commit 79c8c58)
-- [ ] Limpiar DB para experimento confirmatorio ⬜
-- [ ] Day 0 con ATR-based measurement instrument ⬜
+- [x] Limpiar DB para experimento confirmatorio — *2026-08-04 ✅*
+- [x] Day 0 con ATR-based measurement instrument — *2026-08-04 16:19 UTC ✅* (α=1.0, N=14 frozen)
 - [ ] Cerrar BL-034 a BL-040 (7 PARTIAL verify findings) ⬜
 
 ---
