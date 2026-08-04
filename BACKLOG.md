@@ -166,7 +166,7 @@ Se detectó un bug preexistente durante el triage: `init_db` en `db/database.py`
 
 [BL-039] | deuda | baja | openspec/specs/measurement-calibration/spec.md | **REQ-MC-004 resolución no formalizada en spec.** El diseño decidió usar `execution_log.state` como canonical `classified_state`. La spec debería reflejar esta decisión explícitamente en vez de mantener la ambigüedad. | abierto
 
-[BL-040] | deuda | baja | src/trady_ai/core/engine.py, src/trady_ai/paper_trading/session.py | **ATR path DORMANT — sin activación automática.** `engine.py` sigue usando `threshold_pct=0.001`. El operador debe ejecutar calibración pre-Day-0 y adoptar α/ATR explícitamente. No es un bug — es una decisión de diseño documentada, pero debe registrarse para no olvidar activarlo. | abierto
+[BL-040] | deuda | baja | src/trady_ai/core/engine.py, src/trady_ai/paper_trading/session.py | **ATR path DORMANT — sin activación automática.** `engine.py` sigue usando `threshold_pct=0.001`. El operador debe ejecutar calibración pre-Day-0 y adoptar α/ATR explícitamente. No es un bug — es una decisión de diseño documentada, pero debe registrarse para no olvidar activarlo. | cerrado (ATR activado 2026-08-04: α=1.0, N=14 frozen en session.py, commit 79c8c58)
 
 ---
 
