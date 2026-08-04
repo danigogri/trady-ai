@@ -349,28 +349,21 @@ class PaperTradingSession:
     def _do_execute(self, scope: str, domain: str) -> Any:
         """Run the execution engine on captured events.
 
-        ATR activation: set ``TRADY_AI_ALPHA`` env var to a value >= 1.0
-        to activate ATR-based threshold. When unset or 0, uses static
-        ``threshold_pct`` (backward compat, ATR dormant).
+        Uses ATR-based threshold: α=1.0, N=14 (adopted 2026-08-04 via
+        calibrate adopt).  The ``MarketStateTracker`` inside the engine
+        activates the ``ATRCalculator`` internally.
 
         Returns:
             ExecutionResult: Result of the engine run, including strategy
             snapshot data when available.
         """
-        import os
-
         from trady_ai.core.engine import ExecutionResult
         from trady_ai.core.markov_strategy import MarkovStrategy
 
-        # Read ATR config from env vars (calibration pilot)
-        env_alpha = os.environ.get("TRADY_AI_ALPHA")
-        env_atr = os.environ.get("TRADY_AI_ATR_PERIOD")
-
         engine = self._ensure_execution_engine(
-            alpha=float(env_alpha) if env_alpha else None,
-            atr_period=int(env_atr) if env_atr else None,
+            alpha=1.0,
+            atr_period=14,
         )
-        # Build a default strategy with conservative parameters
         strategy = MarkovStrategy(warmup_ticks=50, threshold_pct=0.001)
         return engine.run_from_store(strategy, since_seq=0)
 
