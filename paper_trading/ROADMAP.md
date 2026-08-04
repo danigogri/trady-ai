@@ -295,9 +295,14 @@ AWS cambió el Free Tier recientemente. El modelo actual:
 - [x] `ATRCalculator` + `MarketStateTracker` ATR integration (backward compat) — *2026-07-29 ✅*
 - [x] Reflection snapshot pipeline: ExecutionResult → ReflectionEngine.persist_snapshot() → created_by column — *2026-07-29 ✅*
 - [x] 712+ tests pass, mypy strict clean, ruff clean — *2026-07-29 ✅*
-- [ ] Pre-Day-0 calibration pilot: determinar N (ATR period) y α óptimos con datos de Bybit testnet ⬜
-- [ ] Operador adopta α/N via `calibrate adopt --confirm` ⬜
-- [ ] Activar ATR path en `engine.py` (reemplazar `threshold_pct=0.001`) ⬜
+- [x] Pre-Day-0 calibration pilot: α y N determinados — *2026-08-04 ✅*
+  - **α = 1.0** (4 sesiones: 0.5→27%, 1.0→36%🏆, 2.0→21%, 5.0→0%)
+  - **N = 14** (7 sesiones: 10→biased, 14/15/20→35.7%🏆, 25-40→28%)
+  - Informe: `archive/measurement-calibration/ATR-CALIBRATION-REPORT-2026-08-04.md`
+- [ ] Operador adopta α=1.0, N=14 via `calibrate adopt --confirm` ⬜
+- [ ] Activar ATR path en `engine.py` (reemplazar `threshold_pct=0.001` con `TRADY_AI_ALPHA=1.0` fijo) ⬜
+- [ ] Limpiar DB para experimento confirmatorio ⬜
+- [ ] Day 0 con ATR-based measurement instrument ⬜
 - [ ] Cerrar BL-034 a BL-040 (7 PARTIAL verify findings) ⬜
 
 ---
