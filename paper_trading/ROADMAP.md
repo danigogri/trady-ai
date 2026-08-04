@@ -299,8 +299,8 @@ AWS cambió el Free Tier recientemente. El modelo actual:
   - **α = 1.0** (4 sesiones: 0.5→27%, 1.0→36%🏆, 2.0→21%, 5.0→0%)
   - **N = 14** (7 sesiones: 10→biased, 14/15/20→35.7%🏆, 25-40→28%)
   - Informe: `archive/measurement-calibration/ATR-CALIBRATION-REPORT-2026-08-04.md`
-- [ ] Operador adopta α=1.0, N=14 via `calibrate adopt --confirm` ⬜
-- [ ] Activar ATR path en `engine.py` (reemplazar `threshold_pct=0.001` con `TRADY_AI_ALPHA=1.0` fijo) ⬜
+- [x] Operador adopta α=1.0, N=14 via `calibrate adopt --confirm` — *2026-08-04 ✅* (adoption ID: 1, bundle: cal-004)
+- [x] Activar ATR path frozen en `session.py` (α=1.0, N=14 fijos, sin env var) — *2026-08-04 ✅* (commit 79c8c58)
 - [ ] Limpiar DB para experimento confirmatorio ⬜
 - [ ] Day 0 con ATR-based measurement instrument ⬜
 - [ ] Cerrar BL-034 a BL-040 (7 PARTIAL verify findings) ⬜
