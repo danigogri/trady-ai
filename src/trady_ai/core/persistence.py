@@ -409,31 +409,36 @@ def append_event(db: sqlite_utils.Database, event: dict[str, Any]) -> int | None
 
 
 def get_events(db: sqlite_utils.Database, since_seq: int = 0,
-               limit: int = 2000) -> list[MarketInput]:
+               limit: int | None = None) -> list[MarketInput]:
     """Read events from store as MarketInput list.
 
     Args:
         db: Database instance.
         since_seq: Return events with seq > since_seq. Default 0 = all.
-        limit: Max events to return. Default 2000. Sufficient for daily
-            paper trading sessions. Phases 6+ should implement cursor-based
-            streaming with configurable batch_size for larger datasets.
+        limit: Max events to return. Default None = no limit.
+            Set to an integer to cap results for memory-constrained runs.
 
     Returns:
         list[MarketInput]: Ordered by seq ASC.
 
     Raises:
-        ValueError: If since_seq < 0 or limit <= 0.
+        ValueError: If since_seq < 0.
     """
     if since_seq < 0:
         raise ValueError("since_seq must be >= 0")
-    if limit <= 0:
-        raise ValueError("limit must be > 0")
 
-    rows = db.query(
-        "SELECT market_id, price, volume, timestamp, source FROM event_store WHERE seq > ? ORDER BY seq ASC LIMIT ?",
-        [since_seq, limit],
-    )
+    if limit is None:
+        rows = db.query(
+            "SELECT market_id, price, volume, timestamp, source "
+            "FROM event_store WHERE seq > ? ORDER BY seq ASC",
+            [since_seq],
+        )
+    else:
+        rows = db.query(
+            "SELECT market_id, price, volume, timestamp, source "
+            "FROM event_store WHERE seq > ? ORDER BY seq ASC LIMIT ?",
+            [since_seq, limit],
+        )
     return [
         MarketInput(
             market_id=row["market_id"],

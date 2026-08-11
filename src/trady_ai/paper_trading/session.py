@@ -350,8 +350,10 @@ class PaperTradingSession:
         """Run the execution engine on captured events.
 
         Uses ATR-based threshold: α=1.0, N=14 (adopted 2026-08-04 via
-        calibrate adopt).  The ``MarketStateTracker`` inside the engine
-        activates the ``ATRCalculator`` internally.
+        calibrate adopt).  Restores the strategy from the latest snapshot
+        when available so that transition counts accumulate across sessions.
+        Tracks the last processed ``event_store.seq`` in ``_metadata`` to
+        avoid double-counting.
 
         Returns:
             ExecutionResult: Result of the engine run, including strategy
@@ -360,12 +362,40 @@ class PaperTradingSession:
         from trady_ai.core.engine import ExecutionResult
         from trady_ai.core.markov_strategy import MarkovStrategy
 
-        engine = self._ensure_execution_engine(
-            alpha=1.0,
-            atr_period=14,
-        )
-        strategy = MarkovStrategy(warmup_ticks=50, threshold_pct=0.001)
-        return engine.run_from_store(strategy, since_seq=0)
+        engine = self._ensure_execution_engine(alpha=1.0, atr_period=14)
+
+        # Read last processed seq (tracked in _metadata, not execution_log)
+        row = self._db.execute(
+            "SELECT value FROM _metadata WHERE key = ?",
+            ["last_processed_seq"],
+        ).fetchone()
+        last_seq = int(row[0]) if row else 0
+
+        # Restore strategy from snapshot, or start fresh
+        if last_seq > 0:
+            try:
+                strategy = MarkovStrategy.restore(
+                    domain, "markov_persistence", self._db
+                )
+            except RuntimeError:
+                strategy = MarkovStrategy(warmup_ticks=50, threshold_pct=0.001)
+        else:
+            strategy = MarkovStrategy(warmup_ticks=50, threshold_pct=0.001)
+
+        result = engine.run_from_store(strategy, since_seq=last_seq)
+
+        # Persist the last processed seq so the next session picks up
+        max_seq_row = self._db.execute(
+            "SELECT MAX(seq) FROM event_store"
+        ).fetchone()
+        if max_seq_row and max_seq_row[0] is not None:
+            self._db.execute(
+                "INSERT OR REPLACE INTO _metadata(key, value) "
+                "VALUES(?, ?)",
+                ["last_processed_seq", str(max_seq_row[0])],
+            )
+
+        return result
 
     def _do_reflect(self, scope: str, domain: str, execution_result: Any = None) -> Any:
         """Run the reflection engine for post-execution analysis.
